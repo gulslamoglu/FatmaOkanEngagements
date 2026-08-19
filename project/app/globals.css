@@ -1,0 +1,157 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 40 33% 98%;
+    --foreground: 30 6% 20%;
+    --card: 0 0% 100%;
+    --card-foreground: 30 6% 20%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 30 6% 20%;
+    --primary: 30 25% 40%;
+    --primary-foreground: 40 33% 98%;
+    --secondary: 40 30% 94%;
+    --secondary-foreground: 30 10% 30%;
+    --muted: 40 20% 93%;
+    --muted-foreground: 30 6% 45%;
+    --accent: 30 30% 88%;
+    --accent-foreground: 30 10% 25%;
+    --destructive: 0 65% 50%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 30 15% 88%;
+    --input: 30 15% 86%;
+    --ring: 30 25% 40%;
+    --radius: 0.75rem;
+    --champagne: 40 45% 82%;
+    --sage: 120 15% 70%;
+    --taupe: 30 10% 55%;
+    --charcoal: 30 6% 20%;
+    --ivory: 40 40% 96%;
+    --gold: 38 45% 60%;
+    --chart-1: 30 25% 40%;
+    --chart-2: 120 15% 55%;
+    --chart-3: 40 45% 65%;
+    --chart-4: 30 10% 55%;
+    --chart-5: 0 30% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  h1, h2, h3, h4, .font-serif {
+    font-family: var(--font-serif), 'Cormorant Garamond', Georgia, serif;
+  }
+}
+
+@layer utilities {
+  .font-serif {
+    font-family: var(--font-serif), 'Cormorant Garamond', Georgia, serif;
+  }
+  .font-sans {
+    font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+  .glass {
+    background: rgba(255, 255, 255, 0.6);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .glass-dark {
+    background: rgba(30, 25, 22, 0.4);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .gradient-overlay {
+    background: linear-gradient(
+      to top,
+      rgba(30, 25, 22, 0.75) 0%,
+      rgba(30, 25, 22, 0.35) 40%,
+      rgba(30, 25, 22, 0.1) 70%,
+      transparent 100%
+    );
+  }
+  .gradient-overlay-soft {
+    background: linear-gradient(
+      to bottom,
+      rgba(30, 25, 22, 0.25) 0%,
+      rgba(30, 25, 22, 0.15) 50%,
+      rgba(30, 25, 22, 0.5) 100%
+    );
+  }
+  .masonry {
+    column-gap: 1rem;
+  }
+  .masonry > * {
+    break-inside: avoid;
+    margin-bottom: 1rem;
+  }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+@keyframes sparkle {
+  0%, 100% { opacity: 0; transform: scale(0.5); }
+  50% { opacity: 1; transform: scale(1); }
+}
+@keyframes draw-line {
+  from { stroke-dashoffset: 100; }
+  to { stroke-dashoffset: 0; }
+}
+
+.animate-fade-up { animation: fade-up 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.animate-fade-in { animation: fade-in 0.8s ease both; }
+.animate-scale-in { animation: scale-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.animate-float { animation: float 4s ease-in-out infinite; }
+.animate-sparkle { animation: sparkle 1.5s ease-in-out infinite; }
+
+.delay-100 { animation-delay: 0.1s; }
+.delay-200 { animation-delay: 0.2s; }
+.delay-300 { animation-delay: 0.3s; }
+.delay-400 { animation-delay: 0.4s; }
+.delay-500 { animation-delay: 0.5s; }
+
+.shimmer {
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 1.8s infinite;
+}
+
+/* Elegant scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: hsl(var(--muted-foreground) / 0.3); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / 0.5); }
+
+html { scroll-behavior: smooth; }
