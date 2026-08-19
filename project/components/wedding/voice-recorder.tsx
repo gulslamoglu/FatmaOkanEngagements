@@ -10,6 +10,16 @@ import type { Wedding } from '@/lib/types';
 
 const MAX_SECONDS = 120;
 
+function getSupportedAudioMimeType(): string | undefined {
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4;codecs=mp4a.40.2',
+    'audio/mp4',
+  ];
+  return candidates.find((type) => MediaRecorder.isTypeSupported(type));
+}
+
 export function VoiceRecorder({ wedding }: { wedding: Wedding }) {
   const router = useRouter();
   const sessionId = useSessionId();
@@ -48,12 +58,16 @@ export function VoiceRecorder({ wedding }: { wedding: Wedding }) {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       setPermission('granted');
-      const mr = new MediaRecorder(stream);
+      const preferredMimeType = getSupportedAudioMimeType();
+      const mr = preferredMimeType
+        ? new MediaRecorder(stream, { mimeType: preferredMimeType })
+        : new MediaRecorder(stream);
       mediaRef.current = mr;
       chunksRef.current = [];
       mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       mr.onstop = () => {
-        const b = new Blob(chunksRef.current, { type: 'audio/webm' });
+        const actualMimeType = mr.mimeType || chunksRef.current[0]?.type || preferredMimeType || 'audio/webm';
+        const b = new Blob(chunksRef.current, { type: actualMimeType });
         setBlob(b);
         setAudioUrl(URL.createObjectURL(b));
         stopStream();
@@ -81,10 +95,17 @@ export function VoiceRecorder({ wedding }: { wedding: Wedding }) {
     stopTimer();
   };
 
-  const togglePlay = () => {
+  const togglePlay = async () => {
     if (!audioRef.current) return;
     if (playing) { audioRef.current.pause(); setPlaying(false); }
-    else { audioRef.current.play(); setPlaying(true); }
+    else {
+      try {
+        await audioRef.current.play();
+        setPlaying(true);
+      } catch {
+        toast.error('Bu tarayıcı kayıt biçimini oynatamıyor. Lütfen farklı bir tarayıcı deneyin.');
+      }
+    }
   };
 
   const reset = () => {
@@ -117,8 +138,10 @@ export function VoiceRecorder({ wedding }: { wedding: Wedding }) {
         gid = g?.id || null;
       }
 
-      const path = `${wedding.id}/${new Date().getFullYear()}/${new Date().getMonth() + 1}/${crypto.randomUUID()}.webm`;
-      const { error: upErr } = await supabase.storage.from('wedding-media').upload(path, blob, { contentType: 'audio/webm' });
+      const contentType = blob.type || 'audio/webm';
+      const extension = contentType.includes('mp4') ? 'm4a' : 'webm';
+      const path = `${wedding.id}/${new Date().getFullYear()}/${new Date().getMonth() + 1}/${crypto.randomUUID()}.${extension}`;
+      const { error: upErr } = await supabase.storage.from('wedding-media').upload(path, blob, { contentType });
       if (upErr) throw upErr;
 
       const { data: memory, error: memErr } = await supabase.from('memories').insert({
@@ -144,8 +167,11 @@ export function VoiceRecorder({ wedding }: { wedding: Wedding }) {
       if (mediaErr) throw mediaErr;
 
       setDone(true);
-    } catch {
-      toast.error('Sesli mesaj gönderilemedi');
+    } catch (error) {
+      const message = error && typeof error === 'object' && 'message' in error
+        ? String(error.message)
+        : 'Bilinmeyen hata';
+      toast.error(`Sesli mesaj gönderilemedi: ${message}`);
     } finally {
       setSaving(false);
     }

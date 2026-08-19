@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { Play, Heart, X, ChevronLeft, ChevronRight, Shuffle, Mic } from 'lucide-react';
+import { Play, Heart, X, ChevronLeft, ChevronRight, Shuffle, Mic, Quote } from 'lucide-react';
 import { getSupabase } from '@/lib/supabase/client';
 import { useSessionId } from '@/lib/hooks/use-session-id';
 import { formatDateLong } from '@/lib/format';
@@ -190,13 +190,18 @@ function MemoryCard({
     return (
       <div
         onClick={onOpen}
-        className="group cursor-pointer rounded-2xl border border-border bg-card p-5 transition-all hover:shadow-md"
+        className="group relative min-h-56 cursor-pointer overflow-hidden rounded-2xl border border-primary/15 bg-gradient-to-br from-card via-secondary/45 to-accent/40 p-6 transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-lg"
       >
-        <p className="font-serif text-base font-light text-charcoal leading-relaxed line-clamp-6 italic">
-          "{memory.story}"
+        <div className="absolute -right-8 -top-8 h-28 w-28 rounded-full bg-primary/5 transition-transform duration-500 group-hover:scale-125" />
+        <Quote className="h-8 w-8 text-primary/30" strokeWidth={1.5} />
+        <p className="relative mt-4 font-serif text-xl font-light leading-relaxed text-charcoal line-clamp-6 italic">
+          {memory.story}
         </p>
-        <p className="mt-3 text-xs text-muted-foreground">— {guestName}</p>
-        <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <div className="relative mt-6 flex items-end justify-between gap-3 border-t border-primary/10 pt-4">
+          <div>
+            <p className="text-xs font-medium text-charcoal">{guestName}</p>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">{formatDateLong(memory.created_at)}</p>
+          </div>
           <button onClick={(e) => { e.stopPropagation(); onReact(); }} className="flex items-center gap-1 transition-colors hover:text-primary">
             <Heart className={`h-3.5 w-3.5 ${reacted ? 'fill-primary text-primary' : ''}`} />
             {count > 0 && count}
@@ -307,8 +312,11 @@ function Lightbox({
             // eslint-disable-next-line @next/next/no-img-element
             <img src={url} alt={memory.caption || 'Anı'} className="max-h-[70svh] max-w-full rounded-lg object-contain" />
           ) : memory.type === 'text' ? (
-            <div className="max-w-lg p-8 text-center">
-              <p className="font-serif text-2xl font-light text-white italic leading-relaxed">"{memory.story}"</p>
+            <div className="mx-5 max-w-xl rounded-3xl border border-white/10 bg-white/10 p-8 text-center shadow-2xl backdrop-blur-md sm:p-12">
+              <Quote className="mx-auto h-10 w-10 text-white/30" strokeWidth={1.5} />
+              <p className="mt-6 font-serif text-2xl font-light leading-relaxed text-white italic sm:text-3xl">{memory.story}</p>
+              <div className="mx-auto mt-7 h-px w-12 bg-white/25" />
+              <p className="mt-4 text-sm text-white/65">{guestName}</p>
             </div>
           ) : null}
         </div>

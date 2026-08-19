@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Play } from 'lucide-react';
+import { Play, Quote } from 'lucide-react';
 import { getMediaUrl } from '@/lib/media-url';
 
 interface PreviewMemory {
@@ -33,8 +33,9 @@ export function MemoryGridPreview({ memories, slug }: { memories: PreviewMemory[
               // eslint-disable-next-line @next/next/no-img-element
               <img src={url} alt={m.caption || 'Anı'} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
             ) : (
-              <div className="flex h-full w-full items-center justify-center bg-secondary p-4 text-center">
-                <p className="font-serif text-sm text-muted-foreground line-clamp-3">{m.caption}</p>
+              <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-secondary via-card to-accent/50 p-4 text-center transition-transform duration-500 group-hover:scale-105">
+                <Quote className="mb-2 h-5 w-5 text-primary/35" strokeWidth={1.5} />
+                <p className="font-serif text-sm italic leading-snug text-charcoal line-clamp-4">{m.story || m.caption}</p>
               </div>
             )}
             {isVideo && (

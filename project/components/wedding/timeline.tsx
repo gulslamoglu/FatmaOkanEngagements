@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Play, Mic } from 'lucide-react';
+import { Play, Mic, Quote } from 'lucide-react';
 import { formatTime } from '@/lib/format';
 import type { Memory } from '@/lib/types';
 import { getMediaUrl } from '@/lib/media-url';
@@ -50,9 +50,10 @@ export function Timeline({ memories }: { memories: Memory[] }) {
                   const url = getMediaUrl(media?.thumbnail_path || media?.storage_path);
                   if (m.type === 'text') {
                     return (
-                      <div key={m.id} className="col-span-3 rounded-xl border border-border bg-card p-4">
-                        <p className="font-serif text-sm text-charcoal italic line-clamp-3">"{m.story}"</p>
-                        <p className="mt-2 text-xs text-muted-foreground">— {m.guests?.display_name || 'Anonim'}</p>
+                      <div key={m.id} className="col-span-3 rounded-xl border border-primary/15 bg-gradient-to-br from-card to-secondary/60 p-5 shadow-sm sm:col-span-4">
+                        <Quote className="h-5 w-5 text-primary/30" strokeWidth={1.5} />
+                        <p className="mt-2 font-serif text-base leading-relaxed text-charcoal italic line-clamp-4">{m.story}</p>
+                        <p className="mt-3 border-t border-primary/10 pt-3 text-xs text-muted-foreground">— {m.guests?.display_name || 'Anonim'}</p>
                       </div>
                     );
                   }
