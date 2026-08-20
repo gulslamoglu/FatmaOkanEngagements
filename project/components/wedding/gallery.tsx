@@ -1,15 +1,17 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { Play, Heart, X, ChevronLeft, ChevronRight, Shuffle, Mic, Quote } from 'lucide-react';
+import { Play, Heart, X, ChevronLeft, ChevronRight, Shuffle, Mic, Quote, Loader2 } from 'lucide-react';
 import { getSupabase } from '@/lib/supabase/client';
 import { useSessionId } from '@/lib/hooks/use-session-id';
 import { formatDateLong } from '@/lib/format';
 import type { Memory, Wedding } from '@/lib/types';
 import { getMediaUrl } from '@/lib/media-url';
+import { ReliableAudio, ReliableImage, ReliableVideo } from '@/components/media/reliable-media';
 
 type Filter = 'all' | 'photo' | 'video' | 'text' | 'voice';
 type Sort = 'newest' | 'oldest' | 'random';
+const PAGE_SIZE = 24;
 
 interface Props {
   wedding: Wedding;
@@ -17,7 +19,9 @@ interface Props {
 }
 
 export function Gallery({ wedding, initialMemories }: Props) {
-  const [memories, setMemories] = useState<Memory[]>(initialMemories);
+  const [memories, setMemories] = useState<Memory[]>(initialMemories.slice(0, PAGE_SIZE));
+  const [hasMore, setHasMore] = useState(initialMemories.length > PAGE_SIZE);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [filter, setFilter] = useState<Filter>('all');
   const [sort, setSort] = useState<Sort>('newest');
   const [lightbox, setLightbox] = useState<number | null>(null);
@@ -73,6 +77,29 @@ export function Gallery({ wedding, initialMemories }: Props) {
 
   const next = () => setLightbox((i) => i === null ? null : (i + 1) % filtered.length);
   const prev = () => setLightbox((i) => i === null ? null : (i - 1 + filtered.length) % filtered.length);
+
+  const loadMore = async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    const supabase = getSupabase();
+    const from = memories.length;
+    const { data, error } = await supabase
+      .from('memories')
+      .select('*, guests (*), memory_media (*)')
+      .eq('wedding_id', wedding.id)
+      .eq('status', 'approved')
+      .order('created_at', { ascending: false })
+      .range(from, from + PAGE_SIZE);
+
+    if (error) {
+      setLoadingMore(false);
+      return;
+    }
+    const page = (data || []) as unknown as Memory[];
+    setMemories((current) => [...current, ...page.slice(0, PAGE_SIZE)]);
+    setHasMore(page.length > PAGE_SIZE);
+    setLoadingMore(false);
+  };
 
   const filters: { key: Filter; label: string }[] = [
     { key: 'all', label: 'Tümü' },
@@ -155,6 +182,19 @@ export function Gallery({ wedding, initialMemories }: Props) {
             />
           ))}
         </div>
+        {hasMore && (
+          <div className="mt-8 flex justify-center">
+            <button
+              type="button"
+              onClick={loadMore}
+              disabled={loadingMore}
+              className="inline-flex min-w-40 items-center justify-center gap-2 rounded-full border border-border bg-card px-6 py-3 text-sm font-medium text-charcoal shadow-sm transition-all hover:-translate-y-0.5 hover:bg-secondary hover:shadow-md disabled:pointer-events-none disabled:opacity-60"
+            >
+              {loadingMore && <Loader2 className="h-4 w-4 animate-spin" />}
+              {loadingMore ? 'Yükleniyor...' : 'Daha fazla anı göster'}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Lightbox */}
@@ -194,7 +234,7 @@ function MemoryCard({
       >
         <div className="absolute -right-8 -top-8 h-28 w-28 rounded-full bg-primary/5 transition-transform duration-500 group-hover:scale-125" />
         <Quote className="h-8 w-8 text-primary/30" strokeWidth={1.5} />
-        <p className="relative mt-4 font-serif text-xl font-light leading-relaxed text-charcoal line-clamp-6 italic">
+        <p className="relative mt-4 font-serif text-xl font-light leading-relaxed text-charcoal line-clamp-4 italic">
           {memory.story}
         </p>
         <div className="relative mt-6 flex items-end justify-between gap-3 border-t border-primary/10 pt-4">
@@ -233,12 +273,11 @@ function MemoryCard({
   }
 
   return (
-    <div className="group relative overflow-hidden rounded-2xl bg-muted cursor-pointer" onClick={onOpen}>
+    <div className="group relative aspect-[4/5] overflow-hidden rounded-2xl border border-border/60 bg-muted cursor-pointer shadow-sm" onClick={onOpen}>
       {url && media?.media_type === 'video' ? (
-        <video src={url} muted playsInline preload="metadata" className="w-full object-cover transition-transform duration-500 group-hover:scale-105" />
+        <ReliableVideo src={url} className="h-full w-full" mediaClassName="object-cover group-hover:scale-105" />
       ) : url && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={url} alt={memory.caption || 'Anı'} className="w-full object-cover transition-transform duration-500 group-hover:scale-105" loading="lazy" />
+        <ReliableImage src={url} alt={memory.caption || 'Anı'} className="h-full w-full" mediaClassName="object-cover group-hover:scale-105" />
       )}
       {media?.media_type === 'video' && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/20">
@@ -300,17 +339,16 @@ function Lightbox({
       <div className="flex max-h-full w-full max-w-3xl flex-col items-center" onClick={(e) => e.stopPropagation()}>
         <div className="flex max-h-[70svh] w-full items-center justify-center p-4">
           {media?.media_type === 'video' && url ? (
-            <video src={url} controls playsInline preload="metadata" className="max-h-[70svh] max-w-full rounded-lg" />
+            <ReliableVideo src={url} controls className="h-[70svh] w-full max-w-3xl rounded-xl bg-black" mediaClassName="object-contain" />
           ) : media?.media_type === 'audio' || memory.type === 'voice' ? (
             <div className="flex flex-col items-center gap-6 p-12">
               <div className="flex h-32 w-32 items-center justify-center rounded-full bg-white/10">
                 <Mic className="h-14 w-14 text-white" />
               </div>
-              {url && <audio src={url} controls preload="metadata" className="w-72" />}
+              {url && <ReliableAudio src={url} />}
             </div>
           ) : url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={url} alt={memory.caption || 'Anı'} className="max-h-[70svh] max-w-full rounded-lg object-contain" />
+            <ReliableImage src={url} alt={memory.caption || 'Anı'} eager className="h-[70svh] w-full max-w-3xl rounded-xl bg-black" mediaClassName="object-contain" />
           ) : memory.type === 'text' ? (
             <div className="mx-5 max-w-xl rounded-3xl border border-white/10 bg-white/10 p-8 text-center shadow-2xl backdrop-blur-md sm:p-12">
               <Quote className="mx-auto h-10 w-10 text-white/30" strokeWidth={1.5} />

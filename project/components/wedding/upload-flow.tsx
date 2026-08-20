@@ -102,9 +102,8 @@ export function UploadFlow({ wedding }: Props) {
       }).select('id').single();
 
       if (memErr || !memory) {
-        toast.error('Anı kaydedilemedi');
-        setSaving(false);
-        return;
+        await supabase.storage.from('wedding-media').remove(files.map((file) => file.path));
+        throw memErr || new Error('Anı kaydı oluşturulamadı');
       }
 
       // Create media rows
@@ -116,11 +115,20 @@ export function UploadFlow({ wedding }: Props) {
         file_size: f.file.size,
       }));
       const { error: mediaErr } = await supabase.from('memory_media').insert(mediaRows);
-      if (mediaErr) console.error('media insert error', mediaErr);
+      if (mediaErr) {
+        await Promise.all([
+          supabase.storage.from('wedding-media').remove(files.map((file) => file.path)),
+          supabase.from('memories').delete().eq('id', memory.id),
+        ]);
+        throw mediaErr;
+      }
 
       setStep('done');
-    } catch (e) {
-      toast.error('Bir hata oluştu');
+    } catch (error) {
+      const message = error && typeof error === 'object' && 'message' in error
+        ? String(error.message)
+        : 'Bilinmeyen hata';
+      toast.error(`Anı yüklenemedi: ${message}`);
     } finally {
       setSaving(false);
     }
@@ -233,11 +241,11 @@ export function UploadFlow({ wedding }: Props) {
             <Upload className="h-8 w-8 text-muted-foreground" />
             <span className="mt-3 text-sm font-medium text-charcoal">Dosyaları seç</span>
             <span className="mt-1 text-xs text-muted-foreground">
-              {selectedType === 'video' ? 'MP4, MOV — maks 100MB' : 'JPG, PNG, HEIC, WEBP — maks 15MB'}
+              {selectedType === 'video' ? 'MP4 veya WebM — maks 50 MB' : 'JPG, PNG veya WebP — maks 15 MB'}
             </span>
             <input
               type="file"
-              accept={selectedType === 'video' ? 'video/mp4,video/quicktime,.mp4,.mov' : 'image/jpeg,image/png,image/webp,image/heic,.jpg,.jpeg,.png,.webp,.heic'}
+              accept={selectedType === 'video' ? 'video/mp4,video/webm,.mp4,.webm' : 'image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp'}
               multiple
               className="hidden"
               onChange={(e) => e.target.files && uploader.addFiles(e.target.files)}

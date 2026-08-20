@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Check, X, Trash2, Star, Eye, Download, Play, Mic } from 'lucide-react';
 import type { Memory } from '@/lib/types';
 import { getMediaUrl } from '@/lib/media-url';
+import { ReliableAudio, ReliableImage, ReliableVideo } from '@/components/media/reliable-media';
 
 export function AdminMemories() {
   const [memories, setMemories] = useState<Memory[]>([]);
@@ -101,10 +102,9 @@ export function AdminMemories() {
               <div key={m.id} className="overflow-hidden rounded-xl border border-border bg-card">
                 <div className="relative aspect-square bg-muted" onClick={() => setPreview(m)}>
                   {url && media?.media_type === 'video' ? (
-                    <video src={url} muted playsInline preload="metadata" className="h-full w-full cursor-pointer object-cover" />
+                    <ReliableVideo src={url} className="h-full w-full cursor-pointer" mediaClassName="object-cover" />
                   ) : url && media?.media_type === 'image' ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={url} alt="" className="h-full w-full cursor-pointer object-cover" />
+                    <ReliableImage src={url} alt={m.caption || 'Anı'} className="h-full w-full cursor-pointer" mediaClassName="object-cover" />
                   ) : m.type === 'voice' ? (
                     <div className="flex h-full cursor-pointer items-center justify-center bg-secondary">
                       <Mic className="h-8 w-8 text-primary" />
@@ -169,16 +169,15 @@ export function AdminMemories() {
             </button>
             {preview.memory_media?.[0]?.storage_path && preview.type !== 'text' && preview.type !== 'voice' && (
               preview.memory_media[0].media_type === 'video' ? (
-                <video src={getMediaUrl(preview.memory_media[0].storage_path)} controls playsInline className="max-h-[80svh] max-w-full rounded-lg" />
+                <ReliableVideo src={getMediaUrl(preview.memory_media[0].storage_path)} controls className="h-[70svh] w-[min(90vw,48rem)] rounded-xl bg-black" mediaClassName="object-contain" />
               ) : (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={getMediaUrl(preview.memory_media[0].storage_path)} alt="" className="max-h-[80svh] max-w-full rounded-lg object-contain" />
+                <ReliableImage src={getMediaUrl(preview.memory_media[0].storage_path)} alt={preview.caption || 'Anı'} eager className="h-[70svh] w-[min(90vw,48rem)] rounded-xl bg-black" mediaClassName="object-contain" />
               )
             )}
             {preview.type === 'voice' && preview.memory_media?.[0]?.storage_path && (
               <div className="flex flex-col items-center gap-4 rounded-lg bg-card p-8">
                 <Mic className="h-12 w-12 text-primary" />
-                <audio src={getMediaUrl(preview.memory_media[0].storage_path)} controls preload="metadata" />
+                <ReliableAudio src={getMediaUrl(preview.memory_media[0].storage_path)} />
               </div>
             )}
             {preview.type === 'text' && (

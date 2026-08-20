@@ -5,6 +5,7 @@ import { getSupabase } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 import { Save, QrCode, Download, Loader2, Link as LinkIcon, Copy, Upload } from 'lucide-react';
 import type { Wedding } from '@/lib/types';
+import { ReliableImage } from '@/components/media/reliable-media';
 
 export function AdminSettings() {
   const [wedding, setWedding] = useState<Wedding | null>(null);
@@ -231,11 +232,12 @@ export function AdminSettings() {
               <label className="mb-2 block text-sm font-medium text-charcoal">Kapak Fotoğrafı</label>
               {wedding.cover_image_url && (
                 <div className="mb-3 overflow-hidden rounded-xl border border-border bg-muted">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
+                  <ReliableImage
                     src={wedding.cover_image_url}
                     alt="Kapak fotoğrafı önizlemesi"
-                    className="h-48 w-full object-cover sm:h-64"
+                    eager
+                    className="h-48 w-full sm:h-64"
+                    mediaClassName="object-cover"
                   />
                 </div>
               )}

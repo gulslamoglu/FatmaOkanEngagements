@@ -1,7 +1,8 @@
 import { getServerSupabase } from '@/lib/supabase/server';
 import type { Wedding, Memory, Guest, MemoryMedia } from '@/lib/types';
+import { cache } from 'react';
 
-export async function getWeddingBySlug(slug: string): Promise<Wedding | null> {
+export const getWeddingBySlug = cache(async (slug: string): Promise<Wedding | null> => {
   const supabase = getServerSupabase();
   const { data, error } = await supabase
     .from('weddings')
@@ -10,7 +11,7 @@ export async function getWeddingBySlug(slug: string): Promise<Wedding | null> {
     .maybeSingle();
   if (error) return null;
   return data as Wedding | null;
-}
+});
 
 export async function getApprovedMemories(weddingId: string, limit = 100): Promise<Memory[]> {
   const supabase = getServerSupabase();

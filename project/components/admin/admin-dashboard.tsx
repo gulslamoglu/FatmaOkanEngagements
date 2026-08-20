@@ -5,6 +5,7 @@ import { getSupabase } from '@/lib/supabase/client';
 import { Camera, Video, MessageSquare, Mic, Users, HardDrive, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 import { getMediaUrl } from '@/lib/media-url';
+import { ReliableImage, ReliableVideo } from '@/components/media/reliable-media';
 
 export function AdminDashboard() {
   const [stats, setStats] = useState({ photos: 0, videos: 0, messages: 0, voices: 0, guests: 0, storage: 0, pending: 0 });
@@ -115,10 +116,9 @@ export function AdminDashboard() {
               return (
                 <div key={m.id} className="relative aspect-square overflow-hidden rounded-xl border border-border bg-muted">
                   {url && media?.media_type === 'video' ? (
-                    <video src={url} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+                    <ReliableVideo src={url} className="h-full w-full" mediaClassName="object-cover" />
                   ) : url && media?.media_type === 'image' ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={url} alt="" className="h-full w-full object-cover" />
+                    <ReliableImage src={url} alt={m.caption || 'Anı'} className="h-full w-full" mediaClassName="object-cover" />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center p-4 text-center">
                       <p className="font-serif text-xs text-muted-foreground italic line-clamp-4">"{m.story || m.caption}"</p>

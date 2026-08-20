@@ -5,6 +5,7 @@ import { Maximize, Minimize, Mic, Play } from 'lucide-react';
 import { getSupabase } from '@/lib/supabase/client';
 import type { Memory } from '@/lib/types';
 import { getMediaUrl } from '@/lib/media-url';
+import { ReliableAudio, ReliableImage, ReliableVideo } from '@/components/media/reliable-media';
 
 interface Props {
   weddingId: string;
@@ -84,13 +85,13 @@ export function LiveWall({ weddingId, names, initialMemories }: Props) {
       {/* Content */}
       <div key={m.id} className="absolute inset-0 flex items-center justify-center animate-fade-in">
         {media?.media_type === 'video' && url ? (
-          <video src={url} autoPlay muted loop playsInline className="h-full w-full object-cover" />
+          <ReliableVideo src={url} autoPlay loop className="h-full w-full" mediaClassName="object-cover" />
         ) : media?.media_type === 'audio' || m.type === 'voice' ? (
           <div className="flex flex-col items-center gap-8">
             <div className="flex h-32 w-32 items-center justify-center rounded-full bg-white/10 animate-pulse">
               <Mic className="h-16 w-16 text-white/80" />
             </div>
-            {url && <audio src={url} autoPlay controls preload="metadata" className="w-72" />}
+            {url && <ReliableAudio src={url} autoPlay />}
             <p className="font-serif text-2xl text-white/70 italic">"{m.caption || 'Sesli mesaj'}"</p>
           </div>
         ) : m.type === 'text' ? (
@@ -101,8 +102,7 @@ export function LiveWall({ weddingId, names, initialMemories }: Props) {
             <p className="mt-6 text-sm text-white/50">— {m.guests?.display_name || 'Anonim'}</p>
           </div>
         ) : url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={url} alt={m.caption || ''} className="h-full w-full object-cover" />
+          <ReliableImage src={url} alt={m.caption || ''} eager className="h-full w-full" mediaClassName="object-cover" />
         ) : null}
       </div>
 

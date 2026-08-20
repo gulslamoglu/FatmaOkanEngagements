@@ -1,8 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { Play, Quote } from 'lucide-react';
+import { Play, Quote, Mic } from 'lucide-react';
 import { getMediaUrl } from '@/lib/media-url';
+import { ReliableImage, ReliableVideo } from '@/components/media/reliable-media';
 
 interface PreviewMemory {
   id: string;
@@ -20,6 +21,7 @@ export function MemoryGridPreview({ memories, slug }: { memories: PreviewMemory[
         const media = m.memory_media?.[0];
         const url = getMediaUrl(media?.thumbnail_path || media?.storage_path);
         const isVideo = media?.media_type === 'video' || m.type === 'video';
+        const isAudio = media?.media_type === 'audio' || m.type === 'voice';
         return (
           <Link
             key={m.id}
@@ -27,18 +29,25 @@ export function MemoryGridPreview({ memories, slug }: { memories: PreviewMemory[
             className="group relative aspect-square overflow-hidden rounded-xl bg-muted animate-scale-in"
             style={{ animationDelay: `${i * 60}ms` }}
           >
-            {url && isVideo ? (
-              <video src={url} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+            {isAudio ? (
+              <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-secondary via-card to-accent/50 p-4 text-center">
+                <div className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/10">
+                  <Mic className="h-5 w-5 text-primary" />
+                </div>
+                <p className="mt-3 font-serif text-sm text-charcoal">Sesli mesaj</p>
+                <p className="mt-1 text-[10px] text-muted-foreground">Dinlemek için dokun</p>
+              </div>
+            ) : url && isVideo ? (
+              <ReliableVideo src={url} className="h-full w-full" mediaClassName="object-cover" />
             ) : url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={url} alt={m.caption || 'Anı'} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
+              <ReliableImage src={url} alt={m.caption || 'Anı'} className="h-full w-full" mediaClassName="object-cover group-hover:scale-105" />
             ) : (
               <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-secondary via-card to-accent/50 p-4 text-center transition-transform duration-500 group-hover:scale-105">
                 <Quote className="mb-2 h-5 w-5 text-primary/35" strokeWidth={1.5} />
                 <p className="font-serif text-sm italic leading-snug text-charcoal line-clamp-4">{m.story || m.caption}</p>
               </div>
             )}
-            {isVideo && (
+            {isVideo && !isAudio && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/20">
                 <Play className="h-8 w-8 text-white/90" fill="currentColor" />
               </div>

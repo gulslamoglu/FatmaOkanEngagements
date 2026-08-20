@@ -13,8 +13,13 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   return (
     <html lang="tr" className={`${serif.variable} ${sans.variable}`}>
+      <head>
+        {supabaseUrl && <link rel="preconnect" href={supabaseUrl} crossOrigin="anonymous" />}
+        {supabaseUrl && <link rel="dns-prefetch" href={supabaseUrl} />}
+      </head>
       <body className="font-sans bg-background text-foreground antialiased">
         {children}
         <Toaster position="top-center" />

@@ -5,6 +5,7 @@ import { Play, Mic, Quote } from 'lucide-react';
 import { formatTime } from '@/lib/format';
 import type { Memory } from '@/lib/types';
 import { getMediaUrl } from '@/lib/media-url';
+import { ReliableImage, ReliableVideo } from '@/components/media/reliable-media';
 
 export function Timeline({ memories }: { memories: Memory[] }) {
   const grouped = useMemo(() => {
@@ -67,10 +68,9 @@ export function Timeline({ memories }: { memories: Memory[] }) {
                   return (
                     <div key={m.id} className="relative aspect-square overflow-hidden rounded-xl bg-muted">
                       {url && media?.media_type === 'video' ? (
-                        <video src={url} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+                        <ReliableVideo src={url} className="h-full w-full" mediaClassName="object-cover" />
                       ) : url && (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={url} alt={m.caption || ''} className="h-full w-full object-cover" loading="lazy" />
+                        <ReliableImage src={url} alt={m.caption || ''} className="h-full w-full" mediaClassName="object-cover" />
                       )}
                       {media?.media_type === 'video' && (
                         <div className="absolute inset-0 flex items-center justify-center bg-black/20">

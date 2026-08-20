@@ -5,6 +5,7 @@ import { Camera, MessageSquare, Mic, ArrowRight, ArrowDown, Heart } from 'lucide
 import type { Wedding } from '@/lib/types';
 import { formatDate } from '@/lib/format';
 import { MemoryGridPreview } from '@/components/wedding/memory-grid-preview';
+import { ReliableImage } from '@/components/media/reliable-media';
 
 interface Props {
   wedding: Wedding;
@@ -19,17 +20,18 @@ export function WeddingHero({ wedding, memories, stats }: Props) {
     <div className="min-h-screen">
       {/* Hero */}
       <section className="relative h-[100svh] min-h-[600px] w-full overflow-hidden">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
+        <ReliableImage
           src={wedding.cover_image_url}
           alt={`${names} düğün`}
-          className="absolute inset-0 h-full w-full object-cover"
+          eager
+          className="absolute inset-0 h-full w-full"
+          mediaClassName="object-cover"
         />
         <div className="absolute inset-0 gradient-overlay" />
 
         <div className="relative z-10 flex h-full flex-col items-center justify-center px-6 text-center">
           <div className="animate-fade-up">
-            <p className="mb-4 text-sm uppercase tracking-[0.3em] text-white/70 font-sans">Biz evleniyoruz</p>
+            <p className="mb-4 text-sm uppercase tracking-[0.3em] text-white/70 font-sans">Nişanımıza Hoşgeldiniz</p>
             <h1 className="font-serif text-5xl sm:text-6xl md:text-7xl font-light text-white text-balance leading-tight">
               {names}
             </h1>
@@ -66,7 +68,7 @@ export function WeddingHero({ wedding, memories, stats }: Props) {
           </div>
 
           <p className="mt-6 animate-fade-in text-xs text-white/50 delay-500">
-            Bu alan yalnızca davetlilerimiz için oluşturuldu.
+            Senin gözünden bu özel günü görmek için sabırsızlanıyoruz.
           </p>
         </div>
 
@@ -79,7 +81,7 @@ export function WeddingHero({ wedding, memories, stats }: Props) {
       <section className="bg-background px-6 py-20 sm:py-28">
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="animate-fade-up font-serif text-4xl sm:text-5xl font-light text-charcoal text-balance">
-            Bizim için bir anı bırak
+            Bizim için bir anı bırakır mısın? 
           </h2>
           <p className="mt-5 animate-fade-up text-base text-muted-foreground font-light leading-relaxed delay-100 text-balance">
             Bugün çektiğin fotoğraf veya video belki de bizim hiç göremediğimiz bir anı içeriyor.

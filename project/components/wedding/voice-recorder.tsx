@@ -164,7 +164,13 @@ export function VoiceRecorder({ wedding }: { wedding: Wedding }) {
           duration: elapsed,
           file_size: blob.size,
         });
-      if (mediaErr) throw mediaErr;
+      if (mediaErr) {
+        await Promise.all([
+          supabase.storage.from('wedding-media').remove([path]),
+          supabase.from('memories').delete().eq('id', memory.id),
+        ]);
+        throw mediaErr;
+      }
 
       setDone(true);
     } catch (error) {
