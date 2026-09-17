@@ -14,7 +14,7 @@ interface Props {
 }
 
 export function LiveWall({ weddingId, names, initialMemories }: Props) {
-  const [memories, setMemories] = useState<Memory[]>(initialMemories);
+  const [memories, setMemories] = useState<Memory[]>(initialMemories.filter(memory => memory.type === 'photo' || memory.type === 'video'));
   const [current, setCurrent] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -23,19 +23,21 @@ export function LiveWall({ weddingId, names, initialMemories }: Props) {
   useEffect(() => {
     const supabase = getSupabase();
     const interval = setInterval(async () => {
+      if (document.hidden) return;
       const { data } = await supabase
         .from('memories')
         .select(`*, guests (*), memory_media (*)`)
         .eq('wedding_id', weddingId)
         .in('status', ['approved'])
+        .in('type', ['photo', 'video'])
         .order('created_at', { ascending: false })
         .limit(100);
-      if (data && data.length > memories.length) {
+      if (data) {
         setMemories(data as unknown as Memory[]);
       }
-    }, 8000);
+    }, 20000);
     return () => clearInterval(interval);
-  }, [weddingId, memories.length]);
+  }, [weddingId]);
 
   const advance = useCallback(() => {
     setCurrent((c) => (c + 1) % Math.max(1, memories.length));
@@ -76,7 +78,7 @@ export function LiveWall({ weddingId, names, initialMemories }: Props) {
     );
   }
 
-  const m = memories[current];
+  const m = memories[current % memories.length];
   const media = m.memory_media?.[0];
   const url = getMediaUrl(media?.storage_path || media?.thumbnail_path);
 
@@ -92,12 +94,12 @@ export function LiveWall({ weddingId, names, initialMemories }: Props) {
               <Mic className="h-16 w-16 text-white/80" />
             </div>
             {url && <ReliableAudio src={url} autoPlay />}
-            <p className="font-serif text-2xl text-white/70 italic">"{m.caption || 'Sesli mesaj'}"</p>
+            <p className="font-serif text-2xl text-white/70 italic">&quot;{m.caption || 'Sesli mesaj'}&quot;</p>
           </div>
         ) : m.type === 'text' ? (
           <div className="max-w-2xl px-8 text-center">
             <p className="font-serif text-3xl sm:text-4xl font-light text-white/90 italic leading-relaxed animate-fade-up">
-              "{m.story}"
+              &quot;{m.story}&quot;
             </p>
             <p className="mt-6 text-sm text-white/50">— {m.guests?.display_name || 'Anonim'}</p>
           </div>

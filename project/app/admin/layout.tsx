@@ -13,6 +13,7 @@ function AdminGuard({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!loading && !session && !isLogin) router.replace('/admin');
+    if (!loading && session && isLogin) router.replace('/admin/dashboard');
   }, [loading, session, isLogin, router]);
 
   if (loading) {
@@ -24,7 +25,7 @@ function AdminGuard({ children }: { children: React.ReactNode }) {
   }
 
   if (!session && !isLogin) return null;
-  if (isLogin && session) { router.replace('/admin/dashboard'); return null; }
+  if (isLogin && session) return null;
   if (isLogin) return <>{children}</>;
 
   return <AdminShell>{children}</AdminShell>;

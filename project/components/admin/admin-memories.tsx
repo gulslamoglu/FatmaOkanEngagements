@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { getSupabase } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 import { Check, X, Trash2, Star, Eye, Download, Play, Mic } from 'lucide-react';
+import { expandMemories } from '@/lib/gallery-items';
 import type { Memory } from '@/lib/types';
 import { getMediaUrl } from '@/lib/media-url';
 import { ReliableAudio, ReliableImage, ReliableVideo } from '@/components/media/reliable-media';
@@ -12,24 +13,36 @@ export function AdminMemories() {
   const [memories, setMemories] = useState<Memory[]>([]);
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'photo' | 'video' | 'text' | 'voice'>('all');
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(false);
+  const [pageSize, setPageSize] = useState(200);
+  const [hasMore, setHasMore] = useState(false);
   const [preview, setPreview] = useState<Memory | null>(null);
 
   const load = useCallback(async () => {
     const supabase = getSupabase();
-    let q = supabase.from('memories').select(`*, guests (*), memory_media (*)`).order('created_at', { ascending: false });
+    let q = supabase.from('memories').select(`*, guests (*), memory_media (*)`).order('created_at', { ascending: false }).order('id', {ascending:false});
     if (filter === 'pending') q = q.eq('status', 'pending');
     else if (filter === 'approved') q = q.eq('status', 'approved');
     else if (filter === 'photo' || filter === 'video' || filter === 'text' || filter === 'voice') q = q.eq('type', filter);
-    const { data } = await q.limit(200);
-    setMemories((data || []) as unknown as Memory[]);
+    const data: Memory[] = [];
+    // Supabase caps each response; read bounded pages so older event uploads remain reachable.
+    for(let offset=0; offset<=pageSize; offset+=200) {
+      const end = Math.min(offset+199,pageSize);
+      const {data:rows,error} = await q.range(offset,end);
+      if (error) { toast.error('Anılar yüklenemedi: ' + error.message); setLoading(false); return; }
+      data.push(...(rows || []) as unknown as Memory[]);
+      if(!rows || rows.length < end-offset+1) break;
+    }
+    setHasMore((data?.length || 0) > pageSize);
+    setMemories((data || []).slice(0, pageSize) as unknown as Memory[]);
     setLoading(false);
-  }, [filter]);
+  }, [filter, pageSize]);
 
   useEffect(() => { load(); }, [load]);
 
   const updateStatus = async (id: string, status: string) => {
     const supabase = getSupabase();
-    const { error } = await supabase.from('memories').update({ status }).eq('id', id);
+    const { error } = await supabase.from('memories').update({ status }).eq('id', id).select('id').single();
     if (error) { toast.error('Güncellenemedi'); return; }
     toast.success(status === 'approved' ? 'Onaylandı' : status === 'rejected' ? 'Reddedildi' : 'Gizlendi');
     load();
@@ -37,25 +50,43 @@ export function AdminMemories() {
 
   const toggleFeatured = async (m: Memory) => {
     const supabase = getSupabase();
-    const { error } = await supabase.from('memories').update({ is_featured: !m.is_featured }).eq('id', m.id);
+    const { error } = await supabase.from('memories').update({ is_featured: !m.is_featured }).eq('id', m.id).select('id').single();
     if (error) { toast.error('Güncellenemedi'); return; }
     toast.success(!m.is_featured ? 'Öne çıkarıldı' : 'Öne çıkarma kaldırıldı');
     load();
   };
 
   const handleDelete = async (m: Memory) => {
-    if (!confirm('Bu anı silinsin mi?')) return;
-    const supabase = getSupabase();
-    // Delete media files
-    for (const media of m.memory_media || []) {
-      if (media.storage_path) {
-        await supabase.storage.from('wedding-media').remove([media.storage_path]);
+    if (deleting) return;
+    const media = m.memory_media?.[0];
+    if (!confirm(media ? 'Yalnızca bu dosya silinsin mi? Aynı gönderimdeki diğer dosyalar kalacak.' : 'Bu mesaj silinsin mi?')) return;
+    setDeleting(true);
+    try {
+      const supabase = getSupabase();
+      const result = media
+        ? await supabase.from('memory_media').delete().eq('id',media.id).eq('memory_id',m.id).select('id').single()
+        : await supabase.from('memories').delete().eq('id',m.id).select('id').single();
+      if (result.error) throw result.error;
+      // Remove the selected attachment only. Keep its parent so batch siblings and reactions stay intact.
+      if (media) {
+        const paths = Array.from(new Set([media.storage_path,media.thumbnail_path].filter(Boolean)));
+        const [originals, thumbnails] = await Promise.all([
+          supabase.from('memory_media').select('storage_path').in('storage_path',paths),
+          supabase.from('memory_media').select('thumbnail_path').in('thumbnail_path',paths),
+        ]);
+        if (originals.error || thumbnails.error) toast.warning('Anı kaldırıldı; depolama temizliği tamamlanamadı.');
+        else {
+          const referenced = new Set([...(originals.data || []).map(row=>row.storage_path),...(thumbnails.data || []).map(row=>row.thumbnail_path)]);
+          const unused = paths.filter(path=>!referenced.has(path));
+          if (unused.length) {
+            const {error} = await supabase.storage.from('wedding-media').remove(unused);
+            if(error) toast.warning('Anı kaldırıldı; depolama dosyası silinemedi: '+error.message);
+          }
+        }
       }
-    }
-    const { error } = await supabase.from('memories').delete().eq('id', m.id);
-    if (error) { toast.error('Silinemedi'); return; }
-    toast.success('Silindi');
-    load();
+      setPreview(null); toast.success('Seçilen içerik silindi'); await load();
+    } catch (error) { toast.error('Silinemedi: '+(error && typeof error==='object' && 'message' in error ? String(error.message) : 'Tekrar deneyin.')); }
+    finally { setDeleting(false); }
   };
 
   const filters = [
@@ -77,7 +108,7 @@ export function AdminMemories() {
         {filters.map((f) => (
           <button
             key={f.key}
-            onClick={() => setFilter(f.key)}
+            onClick={() => { setFilter(f.key); setPageSize(200); }}
             className={`whitespace-nowrap rounded-full px-4 py-2 text-xs font-medium transition-colors ${
               filter === f.key ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'
             }`}
@@ -91,15 +122,15 @@ export function AdminMemories() {
         <div className="mt-12 flex justify-center">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
         </div>
-      ) : memories.length === 0 ? (
+      ) : expandMemories(memories).length === 0 ? (
         <p className="mt-12 text-center text-sm text-muted-foreground">Henüz anı yok.</p>
       ) : (
         <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          {memories.map((m) => {
+          {expandMemories(memories).map((m) => {
             const media = m.memory_media?.[0];
             const url = getMediaUrl(media?.thumbnail_path || media?.storage_path);
             return (
-              <div key={m.id} className="overflow-hidden rounded-xl border border-border bg-card">
+              <div key={m.cardId} className="overflow-hidden rounded-xl border border-border bg-card">
                 <div className="relative aspect-square bg-muted" onClick={() => setPreview(m)}>
                   {url && media?.media_type === 'video' ? (
                     <ReliableVideo src={url} className="h-full w-full cursor-pointer" mediaClassName="object-cover" />
@@ -111,7 +142,7 @@ export function AdminMemories() {
                     </div>
                   ) : (
                     <div className="flex h-full cursor-pointer items-center justify-center p-4 text-center">
-                      <p className="font-serif text-xs text-muted-foreground italic line-clamp-4">"{m.story}"</p>
+                      <p className="font-serif text-xs text-muted-foreground italic line-clamp-4">&quot;{m.story}&quot;</p>
                     </div>
                   )}
                   {m.type === 'video' && (
@@ -132,6 +163,7 @@ export function AdminMemories() {
                   <p className="text-xs text-muted-foreground">
                     {m.guests?.display_name || 'Anonim'} · {m.type}
                   </p>
+                  {(memories.find(parent=>parent.id===m.id)?.memory_media?.length || 0)>1 && <p className="mt-1 text-[10px] text-muted-foreground">Toplu gönderim: silme yalnızca bu dosyaya, onay ve öne çıkarma tüm gönderime uygulanır.</p>}
                   <div className="mt-2 flex flex-wrap gap-1">
                     {m.status !== 'approved' && (
                       <button onClick={() => updateStatus(m.id, 'approved')} className="rounded-lg bg-green-100 p-1.5 text-green-700 hover:bg-green-200" title="Onayla">
@@ -149,7 +181,7 @@ export function AdminMemories() {
                     <button onClick={() => setPreview(m)} className="rounded-lg bg-secondary p-1.5 text-muted-foreground hover:bg-muted" title="Görüntüle">
                       <Eye className="h-3.5 w-3.5" />
                     </button>
-                    <button onClick={() => handleDelete(m)} className="rounded-lg bg-red-100 p-1.5 text-red-700 hover:bg-red-200" title="Sil">
+                    <button disabled={deleting} onClick={() => handleDelete(m)} className="rounded-lg bg-red-100 p-1.5 text-red-700 hover:bg-red-200" title="Sil">
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
@@ -160,6 +192,7 @@ export function AdminMemories() {
         </div>
       )}
 
+      {hasMore && <button type="button" onClick={()=>setPageSize(size=>size+200)} className="mt-6 rounded-full border border-border px-5 py-3 text-sm">Daha fazla anı yükle</button>}
       {/* Preview modal */}
       {preview && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setPreview(null)}>
@@ -182,12 +215,12 @@ export function AdminMemories() {
             )}
             {preview.type === 'text' && (
               <div className="max-w-lg rounded-lg bg-card p-8 text-center">
-                <p className="font-serif text-xl text-charcoal italic">"{preview.story}"</p>
+                <p className="font-serif text-xl text-charcoal italic">&quot;{preview.story}&quot;</p>
               </div>
             )}
             <div className="mt-4 rounded-lg bg-card p-4">
               {preview.caption && <p className="font-serif text-lg text-charcoal">{preview.caption}</p>}
-              {preview.story && preview.type !== 'text' && <p className="mt-1 text-sm text-muted-foreground italic">"{preview.story}"</p>}
+              {preview.story && preview.type !== 'text' && <p className="mt-1 text-sm text-muted-foreground italic">&quot;{preview.story}&quot;</p>}
               <p className="mt-2 text-xs text-muted-foreground">{preview.guests?.display_name || 'Anonim'} · {new Date(preview.created_at).toLocaleString('tr-TR')}</p>
             </div>
           </div>

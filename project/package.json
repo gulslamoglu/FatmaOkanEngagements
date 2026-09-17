@@ -7,7 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:guest-limits": "node --test tests/guest-limits.test.cjs tests/guest-limits-db.test.cjs",
+    "predev": "node scripts/generate-couple-photos.cjs",
+    "prebuild": "node scripts/generate-couple-photos.cjs",
+    "test:privacy": "node --test tests/privacy-db.test.cjs tests/couple-photos.test.cjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
@@ -70,5 +74,8 @@
     "typescript": "5.2.2",
     "vaul": "^0.9.9",
     "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8"
   }
 }

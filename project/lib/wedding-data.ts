@@ -1,5 +1,6 @@
 import { getServerSupabase } from '@/lib/supabase/server';
 import type { Wedding, Memory, Guest, MemoryMedia } from '@/lib/types';
+import { engagementGuide, engagementLocation } from '@/lib/event-guide';
 import { cache } from 'react';
 
 export const getWeddingBySlug = cache(async (slug: string): Promise<Wedding | null> => {
@@ -10,7 +11,16 @@ export const getWeddingBySlug = cache(async (slug: string): Promise<Wedding | nu
     .eq('slug', slug)
     .maybeSingle();
   if (error) return null;
-  return data as Wedding | null;
+  if (!data) return null;
+  const wedding = data as Wedding;
+  if (slug === 'fatma-okan') {
+    if (!wedding.location || wedding.location.trim().toLocaleLowerCase('tr') === 'istanbul') wedding.location = engagementLocation;
+    if (!wedding.event_guide) {
+      wedding.event_guide = engagementGuide;
+
+    }
+  }
+  return wedding;
 });
 
 export async function getApprovedMemories(weddingId: string, limit = 100): Promise<Memory[]> {
@@ -24,7 +34,9 @@ export async function getApprovedMemories(weddingId: string, limit = 100): Promi
     `)
     .eq('wedding_id', weddingId)
     .in('status', ['approved'])
+    .in('type', ['photo', 'video'])
     .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
     .limit(limit);
   if (error) return [];
   return (data || []) as unknown as Memory[];
@@ -32,19 +44,9 @@ export async function getApprovedMemories(weddingId: string, limit = 100): Promi
 
 export async function getStats(weddingId: string) {
   const supabase = getServerSupabase();
-  const [photos, videos, messages, voices, guests] = await Promise.all([
-    supabase.from('memories').select('id', { count: 'exact', head: true }).eq('wedding_id', weddingId).eq('type', 'photo'),
-    supabase.from('memories').select('id', { count: 'exact', head: true }).eq('wedding_id', weddingId).eq('type', 'video'),
-    supabase.from('memories').select('id', { count: 'exact', head: true }).eq('wedding_id', weddingId).eq('type', 'text'),
-    supabase.from('memories').select('id', { count: 'exact', head: true }).eq('wedding_id', weddingId).eq('type', 'voice'),
-    supabase.from('guests').select('id', { count: 'exact', head: true }).eq('wedding_id', weddingId),
+  const [photos, videos] = await Promise.all([
+    supabase.from('memory_media').select('id, memories!inner(wedding_id,status,type)', { count: 'exact', head: true }).eq('memories.wedding_id', weddingId).eq('media_type', 'image').eq('memories.type', 'photo').eq('memories.status', 'approved'),
+    supabase.from('memory_media').select('id, memories!inner(wedding_id,status,type)', { count: 'exact', head: true }).eq('memories.wedding_id', weddingId).eq('media_type', 'video').eq('memories.type', 'video').eq('memories.status', 'approved'),
   ]);
-  return {
-    photos: photos.count || 0,
-    videos: videos.count || 0,
-    messages: messages.count || 0,
-    voices: voices.count || 0,
-    guests: guests.count || 0,
-    total: (photos.count || 0) + (videos.count || 0) + (messages.count || 0) + (voices.count || 0),
-  };
+  return { photos: photos.count || 0, videos: videos.count || 0, messages: 0, voices: 0, guests: 0, total: (photos.count || 0) + (videos.count || 0) };
 }

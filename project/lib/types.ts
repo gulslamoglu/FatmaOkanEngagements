@@ -2,6 +2,7 @@ export type MemoryType = 'photo' | 'video' | 'text' | 'voice';
 export type MemoryStatus = 'pending' | 'approved' | 'rejected' | 'hidden';
 
 export interface Wedding {
+  event_guide?: import('./event-guide').EventGuideData;
   id: string;
   user_id: string;
   bride_name: string;
@@ -10,6 +11,7 @@ export interface Wedding {
   location: string;
   welcome_message: string;
   cover_image_url: string;
+  cover_position?: import('./cover-position').CoverPosition;
   slug: string;
   access_token: string;
   gallery_enabled: boolean;

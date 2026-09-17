@@ -1,11 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowRight, Check, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { getSupabase } from '@/lib/supabase/client';
 import { useSessionId } from '@/lib/hooks/use-session-id';
+import { ensureSharingReady } from '@/lib/sharing';
+import { getOrCreateGuest } from '@/lib/guest-usage';
 import type { Wedding } from '@/lib/types';
 
 const SUGGESTIONS = [
@@ -22,35 +24,21 @@ export function MessageForm({ wedding }: { wedding: Wedding }) {
   const [anonymous, setAnonymous] = useState(false);
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
+  const sending = useRef(false);
   const [done, setDone] = useState(false);
 
   const handleSubmit = async () => {
+    if (sending.current) return;
     if (!message.trim()) {
       toast.error('Lütfen bir mesaj yaz');
       return;
     }
-    setSaving(true);
+    sending.current = true; setSaving(true);
     try {
+      await ensureSharingReady(wedding.id);
       const supabase = getSupabase();
 
-      // Find or create guest
-      const { data: existing } = await supabase
-        .from('guests')
-        .select('id')
-        .eq('wedding_id', wedding.id)
-        .eq('session_id', sessionId)
-        .maybeSingle();
-
-      let gid: string | null = existing?.id || null;
-      if (!gid) {
-        const { data: g } = await supabase.from('guests').insert({
-          wedding_id: wedding.id,
-          display_name: anonymous ? '' : name.trim(),
-          is_anonymous: anonymous,
-          session_id: sessionId,
-        }).select('id').single();
-        gid = g?.id || null;
-      }
+      const gid = await getOrCreateGuest(wedding.id, sessionId, name, anonymous);
 
       const { error } = await supabase.from('memories').insert({
         wedding_id: wedding.id,
@@ -63,10 +51,10 @@ export function MessageForm({ wedding }: { wedding: Wedding }) {
 
       if (error) throw error;
       setDone(true);
-    } catch {
-      toast.error('Mesaj gönderilemedi');
+    } catch (error) {
+      toast.error(error && typeof error === 'object' && 'message' in error ? String(error.message) : 'Mesaj gönderilemedi');
     } finally {
-      setSaving(false);
+      sending.current = false; setSaving(false);
     }
   };
 
@@ -79,7 +67,7 @@ export function MessageForm({ wedding }: { wedding: Wedding }) {
           </div>
           <h1 className="font-serif text-4xl font-light text-charcoal">Mesajın bize ulaştı.</h1>
           <p className="mt-4 font-serif text-lg text-muted-foreground font-light italic text-balance">
-            "Yıllar sonra okuduğumuzda yine aynı sıcaklığı hissedeceğiz."
+            &quot;Yıllar sonra okuduğumuzda yine aynı sıcaklığı hissedeceğiz.&quot;
           </p>
           <div className="mt-10 flex flex-col gap-3">
             <button
@@ -106,9 +94,10 @@ export function MessageForm({ wedding }: { wedding: Wedding }) {
       <div className="mx-auto max-w-lg">
         <h1 className="font-serif text-3xl font-light text-charcoal">Bize birkaç kelime bırak</h1>
         <p className="mt-2 text-sm text-muted-foreground font-light">
-          Belki bugün söylemeye fırsat bulamadığın bir şey vardır…
+          Bu mesaj sadece çifte iletilir. Misafir galerisinde ve canlı anı duvarında görünmez.
         </p>
 
+        <p className="mt-4 rounded-xl bg-secondary/60 p-4 text-xs leading-relaxed text-muted-foreground">Yazılı mesaj hakkın sınırsız. Dilediğin kadar mesaj bırakabilirsin; her mesaj en fazla 1.000 karakter.</p>
         <div className="mt-6 space-y-4">
           <div>
             <label className="mb-2 block text-sm font-medium text-charcoal">Adın (opsiyonel)</label>

@@ -16,7 +16,7 @@ const links = [
   { href: '/gallery', label: 'Galeri', icon: ImageIcon },
   { href: '/messages', label: 'Mesaj', icon: MessageSquare },
   { href: '/voice', label: 'Ses', icon: Mic },
-  { href: '/timeline', label: 'Zaman', icon: Sparkles },
+  { href: '#nisan-rehberi', label: 'Rehber', icon: Sparkles },
 ];
 
 export function WeddingNav({ slug, names }: Props) {

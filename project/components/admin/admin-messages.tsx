@@ -21,11 +21,12 @@ export function AdminMessages() {
 
   const load = useCallback(async () => {
     const supabase = getSupabase();
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('memories')
       .select('*, guests (*)')
       .eq('type', 'text')
       .order('created_at', { ascending: false });
+    if(error) { toast.error('Mesajlar yüklenemedi: '+error.message); setLoading(false); return; }
     setMessages((data || []) as unknown as TextMemory[]);
     setLoading(false);
   }, []);
@@ -35,7 +36,7 @@ export function AdminMessages() {
   const handleDelete = async (id: string) => {
     if (!confirm('Bu mesaj silinsin mi?')) return;
     const supabase = getSupabase();
-    const { error } = await supabase.from('memories').delete().eq('id', id);
+    const { error } = await supabase.from('memories').delete().eq('id', id).select('id').single();
     if (error) { toast.error('Silinemedi'); return; }
     toast.success('Silindi');
     load();
@@ -62,7 +63,7 @@ export function AdminMessages() {
           {messages.map((m) => (
             <div key={m.id} className="mb-6 break-inside-avoid rounded-2xl border border-border bg-card p-6">
               <p className="font-serif text-lg font-light text-charcoal italic leading-relaxed">
-                "{m.story}"
+                &quot;{m.story}&quot;
               </p>
               <div className="mt-4 flex items-center justify-between">
                 <div>

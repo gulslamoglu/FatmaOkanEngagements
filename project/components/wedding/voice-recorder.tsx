@@ -6,6 +6,11 @@ import { Mic, Square, Play, Pause, RefreshCw, ArrowRight, Check, Trash2 } from '
 import { toast } from 'sonner';
 import { getSupabase } from '@/lib/supabase/client';
 import { useSessionId } from '@/lib/hooks/use-session-id';
+import { ensureSharingReady, PRIVATE_SUBMISSION_VERSION } from '@/lib/sharing';
+import { GuestAllowance } from '@/components/wedding/guest-allowance';
+import { useGuestUsage } from '@/lib/hooks/use-guest-usage';
+import { getGuestUsage, getOrCreateGuest } from '@/lib/guest-usage';
+import { checkAllowance } from '@/lib/guest-limits';
 import type { Wedding } from '@/lib/types';
 
 const MAX_SECONDS = 120;
@@ -23,6 +28,11 @@ function getSupportedAudioMimeType(): string | undefined {
 export function VoiceRecorder({ wedding }: { wedding: Wedding }) {
   const router = useRouter();
   const sessionId = useSessionId();
+  const quota = useGuestUsage(wedding.id, sessionId);
+  const sendLock = useRef(false);
+  const recordingLock = useRef(false);
+  const uploadId = useRef<string | null>(null);
+  const storedAudioPath = useRef<string | null>(null);
   const [name, setName] = useState('');
   const [anonymous, setAnonymous] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -34,6 +44,9 @@ export function VoiceRecorder({ wedding }: { wedding: Wedding }) {
   const [done, setDone] = useState(false);
   const [permission, setPermission] = useState<'idle' | 'granted' | 'denied'>('idle');
 
+  const mounted = useRef(false);
+  const audioUrlRef = useRef<string | null>(null);
+  const elapsedRef = useRef(0);
   const mediaRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
@@ -50,12 +63,28 @@ export function VoiceRecorder({ wedding }: { wedding: Wedding }) {
   }, []);
 
   useEffect(() => {
-    return () => { stopStream(); stopTimer(); };
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (mediaRef.current) { mediaRef.current.onstop = null; mediaRef.current.ondataavailable = null; if(mediaRef.current.state !== 'inactive') mediaRef.current.stop(); }
+      stopStream(); stopTimer();
+      if(audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+    };
   }, [stopStream, stopTimer]);
 
   const startRecording = async () => {
+    if (recordingLock.current || saving) return;
+    recordingLock.current = true;
+    try {
+      const usage = await getGuestUsage(wedding.id, sessionId);
+      checkAllowance(usage, [{ id: crypto.randomUUID(), kind: 'audio' }]);
+    } catch (error) {
+      recordingLock.current = false;
+      toast.error(error instanceof Error ? error.message : 'Hakların kontrol edilemedi.'); return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!mounted.current) { stream.getTracks().forEach(track=>track.stop()); return; }
       streamRef.current = stream;
       setPermission('granted');
       const preferredMimeType = getSupportedAudioMimeType();
@@ -69,22 +98,24 @@ export function VoiceRecorder({ wedding }: { wedding: Wedding }) {
         const actualMimeType = mr.mimeType || chunksRef.current[0]?.type || preferredMimeType || 'audio/webm';
         const b = new Blob(chunksRef.current, { type: actualMimeType });
         setBlob(b);
-        setAudioUrl(URL.createObjectURL(b));
+        if(audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+        audioUrlRef.current = URL.createObjectURL(b);
+        setAudioUrl(audioUrlRef.current);
         stopStream();
       };
       mr.start();
       setRecording(true);
-      setElapsed(0);
+      elapsedRef.current = 0; setElapsed(0);
       timerRef.current = setInterval(() => {
-        setElapsed((e) => {
-          if (e + 1 >= MAX_SECONDS) { stopRecording(); return MAX_SECONDS; }
-          return e + 1;
-        });
+        elapsedRef.current = Math.min(MAX_SECONDS, elapsedRef.current + 1);
+        setElapsed(elapsedRef.current);
+        if(elapsedRef.current >= MAX_SECONDS) stopRecording();
       }, 1000);
     } catch {
       setPermission('denied');
-      toast.error('Mikrofon izni reddedildi');
-    }
+      stopStream();
+      toast.error('Mikrofon açılamadı. İznini ve tarayıcı desteğini kontrol et.');
+    } finally { recordingLock.current = false; }
   };
 
   const stopRecording = () => {
@@ -109,78 +140,48 @@ export function VoiceRecorder({ wedding }: { wedding: Wedding }) {
   };
 
   const reset = () => {
+    if (sendLock.current) return;
+    uploadId.current = null;
+    storedAudioPath.current = null;
     setBlob(null);
-    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    
+    setPlaying(false);
+    if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+    audioUrlRef.current = null;
     setAudioUrl(null);
     setElapsed(0);
   };
 
   const handleSend = async () => {
-    if (!blob) return;
-    setSaving(true);
+    if (!blob || sendLock.current) return;
+    sendLock.current = true; setSaving(true);
     try {
+      await ensureSharingReady(wedding.id);
+      uploadId.current ||= crypto.randomUUID();
+      const id = uploadId.current;
+      const usage = await getGuestUsage(wedding.id, sessionId);
+      checkAllowance(usage, [{ id, kind: 'audio' }]);
       const supabase = getSupabase();
-      const { data: existing } = await supabase
-        .from('guests')
-        .select('id')
-        .eq('wedding_id', wedding.id)
-        .eq('session_id', sessionId)
-        .maybeSingle();
-
-      let gid = existing?.id || null;
-      if (!gid) {
-        const { data: g } = await supabase.from('guests').insert({
-          wedding_id: wedding.id,
-          display_name: anonymous ? '' : name.trim(),
-          is_anonymous: anonymous,
-          session_id: sessionId,
-        }).select('id').single();
-        gid = g?.id || null;
-      }
-
+      await getOrCreateGuest(wedding.id, sessionId, name, anonymous);
       const contentType = blob.type || 'audio/webm';
       const extension = contentType.includes('mp4') ? 'm4a' : 'webm';
-      const path = `${wedding.id}/${new Date().getFullYear()}/${new Date().getMonth() + 1}/${crypto.randomUUID()}.${extension}`;
-      const { error: upErr } = await supabase.storage.from('wedding-media').upload(path, blob, { contentType });
-      if (upErr) throw upErr;
-
-      const { data: memory, error: memErr } = await supabase.from('memories').insert({
-        wedding_id: wedding.id,
-        guest_id: gid,
-        type: 'voice',
-        caption: anonymous ? '' : name.trim(),
-        story: '',
-        status: wedding.moderation_enabled ? 'pending' : 'approved',
-      }).select('id').single();
-
-      if (memErr || !memory) throw memErr || new Error('Anı kaydı oluşturulamadı');
-
-      // Insert media row
-      const { error: mediaErr } = await supabase.from('memory_media').insert({
-          memory_id: memory.id,
-          media_type: 'audio',
-          storage_path: path,
-          thumbnail_path: '',
-          duration: elapsed,
-          file_size: blob.size,
-        });
-      if (mediaErr) {
-        await Promise.all([
-          supabase.storage.from('wedding-media').remove([path]),
-          supabase.from('memories').delete().eq('id', memory.id),
-        ]);
-        throw mediaErr;
+      const path = wedding.id + '/voice/' + id + '.' + extension;
+      if (storedAudioPath.current !== path) {
+        const { error: upErr } = await supabase.storage.from('wedding-media').upload(path, blob, { contentType });
+        if (upErr && !/already exists|duplicate/i.test(upErr.message) && !('statusCode' in upErr && String(upErr.statusCode) === '409')) throw upErr;
+        storedAudioPath.current = path;
       }
-
-      setDone(true);
+      const { error: submitError } = await supabase.rpc('submit_media_memories', {
+        event_id:wedding.id, guest_session:sessionId, consent_version:PRIVATE_SUBMISSION_VERSION,
+        submissions:[{id, kind:'audio', path, fileSize:blob.size, duration:elapsed, caption:anonymous?'':name.trim(), story:''}],
+      });
+      if (submitError) throw submitError;
+      await quota.refresh(); setDone(true);
     } catch (error) {
-      const message = error && typeof error === 'object' && 'message' in error
-        ? String(error.message)
-        : 'Bilinmeyen hata';
-      toast.error(`Sesli mesaj gönderilemedi: ${message}`);
-    } finally {
-      setSaving(false);
-    }
+      const message = error && typeof error === 'object' && 'message' in error ? String(error.message) : 'Bilinmeyen hata';
+      toast.error('Sesli mesaj gönderilemedi: ' + message);
+      void quota.refresh();
+    } finally { sendLock.current = false; setSaving(false); }
   };
 
   if (done) {
@@ -192,11 +193,13 @@ export function VoiceRecorder({ wedding }: { wedding: Wedding }) {
           </div>
           <h1 className="font-serif text-4xl font-light text-charcoal">Sesin bizimle.</h1>
           <p className="mt-4 font-serif text-lg text-muted-foreground font-light italic">
-            "Yıllar sonra bile sesini duyabileceğiz."
+            &quot;Yıllar sonra bile sesini duyabileceğiz.&quot;
           </p>
+          <GuestAllowance {...quota} onRetry={() => { void quota.refresh(); }} />
           <div className="mt-10 flex flex-col gap-3">
             <button
               onClick={() => { setDone(false); reset(); }}
+              disabled={quota.loading || !!quota.error || !quota.usage || quota.usage.audio >= 2}
               className="flex w-full items-center justify-center gap-2 rounded-full bg-primary px-6 py-3.5 text-sm font-medium text-primary-foreground transition-all hover:opacity-90"
             >
               <Mic className="h-4 w-4" /> Başka Bir Ses Kaydet
@@ -222,9 +225,10 @@ export function VoiceRecorder({ wedding }: { wedding: Wedding }) {
       <div className="mx-auto max-w-lg">
         <h1 className="font-serif text-3xl font-light text-charcoal">Sesini Bırak</h1>
         <p className="mt-2 text-sm text-muted-foreground font-light">
-          Bize kısa bir sesli mesaj kaydet. En fazla 2 dakika.
+          Sesin sadece çifte özel. Misafir galerisinde veya canlı anı duvarında görünmez. En fazla 2 dakika.
         </p>
 
+        <GuestAllowance {...quota} onRetry={() => { void quota.refresh(); }} />
         {/* Name */}
         <div className="mt-6 space-y-4">
           <div>
@@ -244,6 +248,7 @@ export function VoiceRecorder({ wedding }: { wedding: Wedding }) {
           </label>
         </div>
 
+        <p className="mt-5 text-xs leading-6 text-muted-foreground">Kaydı başlatınca tarayıcın mikrofon erişimi ister. Daha önce izin verdiysen tekrar sormayabilir. Kayıt bitince mikrofon kapanır; Gönder düğmesine basana kadar kayıt cihazında kalır. Sesini yalnızca çift dinleyebilir.</p>
         {/* Recorder */}
         <div className="mt-8 rounded-2xl border border-border bg-card p-8 text-center">
           {!audioUrl && !recording && (
@@ -257,6 +262,7 @@ export function VoiceRecorder({ wedding }: { wedding: Wedding }) {
               )}
               <button
                 onClick={startRecording}
+                disabled={quota.loading || !!quota.error || !quota.usage || quota.usage.audio >= 2}
                 className="mt-6 inline-flex items-center gap-2 rounded-full bg-primary px-8 py-4 text-sm font-medium text-primary-foreground transition-all hover:opacity-90 active:scale-[0.98]"
               >
                 <Mic className="h-5 w-5" /> Kayda Başla

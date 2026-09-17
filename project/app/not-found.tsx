@@ -6,7 +6,7 @@ export default function NotFound() {
       <div className="animate-fade-up">
         <h1 className="font-serif text-5xl font-light text-charcoal">404</h1>
         <p className="mt-4 font-serif text-xl text-muted-foreground font-light italic">
-          "Bu sayfa bulunamadı."
+          &quot;Bu sayfa bulunamadı.&quot;
         </p>
         <Link
           href="/w/fatma-okan"

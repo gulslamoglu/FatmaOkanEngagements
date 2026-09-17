@@ -1,157 +1,109 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { getSupabase } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 
-interface UploadItem {
-  file: File;
-  progress: number;
-  status: 'pending' | 'uploading' | 'done' | 'error';
-  previewUrl?: string;
-  path?: string;
-}
+type Kind = 'image' | 'video';
+interface Uploaded { path: string; thumbnailPath: string; kind: Kind; file: File; id: string }
+interface UploadItem { id: string; file: File; kind: Kind; status: 'pending' | 'uploading' | 'done' | 'error'; previewUrl?: string; result?: Uploaded; error?: string }
 
-const MAX_PHOTO_MB = 15;
-const MAX_VIDEO_MB = 50;
-const ACCEPTED_PHOTO = ['image/jpeg', 'image/png', 'image/webp'];
-const ACCEPTED_VIDEO = ['video/mp4', 'video/webm'];
-const MAX_IMAGE_EDGE = 2400;
-const IMAGE_QUALITY = 0.82;
-const UPLOAD_CONCURRENCY = 3;
-
-async function optimizeImage(file: File): Promise<File> {
+async function resize(file: File, edge: number, quality: number): Promise<File> {
+  const bitmap = await createImageBitmap(file);
   try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(bitmap.width, bitmap.height));
-    if (scale === 1 && file.size < 1.5 * 1024 * 1024) {
-      bitmap.close();
-      return file;
-    }
-
+    const scale = Math.min(1, edge / Math.max(bitmap.width, bitmap.height));
     const canvas = document.createElement('canvas');
-    canvas.width = Math.round(bitmap.width * scale);
-    canvas.height = Math.round(bitmap.height * scale);
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
     const context = canvas.getContext('2d');
-    if (!context) { bitmap.close(); return file; }
+    if (!context) throw new Error('Fotoğraf hazırlanamadı. Başka bir tarayıcıda tekrar deneyin.');
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
     context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close();
-
-    const optimized = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/webp', IMAGE_QUALITY));
-    if (!optimized || optimized.size >= file.size) return file;
-    const baseName = file.name.replace(/\.[^.]+$/, '');
-    return new File([optimized], `${baseName}.webp`, { type: 'image/webp', lastModified: file.lastModified });
-  } catch {
-    return file;
-  }
-}
-
-function fileToPath(weddingId: string, file: File): string {
-  const ext = file.name.split('.').pop()?.toLowerCase() || 'bin';
-  const safe = `${crypto.randomUUID()}.${ext}`;
-  const date = new Date();
-  const ym = `${date.getFullYear()}/${date.getMonth() + 1}`;
-  return `${weddingId}/${ym}/${safe}`;
-}
-
-function validateFile(file: File): { ok: boolean; error?: string; kind?: 'image' | 'video' } {
-  const isPhoto = ACCEPTED_PHOTO.includes(file.type) || /\.(jpe?g|png|webp)$/i.test(file.name);
-  const isVideo = ACCEPTED_VIDEO.includes(file.type) || /\.(mp4|webm)$/i.test(file.name);
-  if (isPhoto) {
-    if (file.size > MAX_PHOTO_MB * 1024 * 1024) return { ok: false, error: `Fotoğraf ${MAX_PHOTO_MB}MB'den küçük olmalı` };
-    return { ok: true, kind: 'image' };
-  }
-  if (isVideo) {
-    if (file.size > MAX_VIDEO_MB * 1024 * 1024) return { ok: false, error: `Video ${MAX_VIDEO_MB}MB'den küçük olmalı` };
-    return { ok: true, kind: 'video' };
-  }
-  return { ok: false, error: 'Desteklenmeyen format. Fotoğraf için JPG/PNG/WebP, video için MP4/WebM kullanın' };
+    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/webp', quality));
+    if (!blob) throw new Error('Fotoğraf hazırlanamadı.');
+    return new File([blob], file.name.replace(/\.[^.]+$/, '') + (blob.type === 'image/webp' ? '.webp' : '.png'), { type: blob.type });
+  } finally { bitmap.close(); }
 }
 
 export function useUploader(weddingId: string) {
-  const supabase = getSupabase();
   const [items, setItems] = useState<UploadItem[]>([]);
+  const itemsRef = useRef<UploadItem[]>([]);
+  const busy = useRef(false);
   const [uploading, setUploading] = useState(false);
+  const update = useCallback((next: UploadItem[]) => { itemsRef.current = next; setItems(next); }, []);
+  const patch = (id: string, values: Partial<UploadItem>) => update(itemsRef.current.map(item => item.id === id ? { ...item, ...values } : item));
+  useEffect(() => () => { itemsRef.current.forEach(item => { if (item.previewUrl) URL.revokeObjectURL(item.previewUrl); }); }, []);
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => { if (busy.current) { event.preventDefault(); event.returnValue = ''; } };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, []);
 
   const addFiles = useCallback((files: FileList | File[]) => {
-    const arr = Array.from(files);
-    const newItems: UploadItem[] = [];
-    for (const file of arr) {
-      const v = validateFile(file);
-      if (!v.ok) {
-        toast.error(`${file.name}: ${v.error}`);
-        continue;
-      }
-      newItems.push({
-        file,
-        progress: 0,
-        status: 'pending',
-        previewUrl: v.kind === 'image' ? URL.createObjectURL(file) : undefined,
-      });
+    if (busy.current) return;
+    const next = [...itemsRef.current];
+    for (const file of Array.from(files)) {
+      const kind: Kind | null = /^(image\/(jpeg|png|webp))$/.test(file.type) ? 'image' : /^(video\/(mp4|webm|quicktime))$/.test(file.type) ? 'video' : null;
+      if (!kind || file.size === 0) { toast.error(file.name + ': JPG, PNG, WebP, MP4, WebM veya MOV seçin.'); continue; }
+      if (file.size > (kind === 'image' ? 15 : 50) * 1024 * 1024) { toast.error(file.name + ': Dosya sınırı ' + (kind === 'image' ? '15' : '50') + ' MB.'); continue; }
+      if (next.some(item => item.file.name === file.name && item.file.size === file.size && item.file.lastModified === file.lastModified)) continue;
+      if (next.some(item => item.kind !== kind) || next.filter(item => item.kind === kind).length >= (kind === 'image' ? 5 : 1)) { toast.error('Bir gönderimde 5 fotoğraf veya 1 video seçebilirsin.'); break; }
+      next.push({ id: crypto.randomUUID(), file, kind, status: 'pending', previewUrl: kind === 'image' ? URL.createObjectURL(file) : undefined });
     }
-    setItems((prev) => [...prev, ...newItems]);
-  }, []);
+    update(next);
+  }, [update]);
 
   const removeItem = useCallback((idx: number) => {
-    setItems((prev) => {
-      const item = prev[idx];
-      if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
-      return prev.filter((_, i) => i !== idx);
-    });
-  }, []);
+    if (busy.current) return;
+    const item = itemsRef.current[idx];
+    if (item?.previewUrl) URL.revokeObjectURL(item.previewUrl);
+    update(itemsRef.current.filter((_, i) => i !== idx));
+  }, [update]);
 
-  const uploadAll = useCallback(async (): Promise<{ path: string; kind: 'image' | 'video'; file: File }[]> => {
-    setUploading(true);
-    const results: { path: string; kind: 'image' | 'video'; file: File }[] = [];
-
-    const uploadItem = async (i: number) => {
-      const item = items[i];
-      if (item.status === 'done') {
-        if (item.path) {
-          const v = validateFile(item.file);
-          results.push({ path: item.path, kind: v.kind || 'image', file: item.file });
+  const uploadAll = async (): Promise<Uploaded[]> => {
+    if (busy.current) throw new Error('Yükleme devam ediyor.');
+    if (!navigator.onLine) throw new Error('İnternet bağlantın yok. Bağlandıktan sonra tekrar dene.');
+    busy.current = true; setUploading(true);
+    const supabase = getSupabase();
+    const results: Uploaded[] = [];
+    try {
+      // Sequential work bounds phone memory and leaves bandwidth for other guests.
+      for (const item of itemsRef.current) {
+        if (item.result) { results.push(item.result); continue; }
+        patch(item.id, { status: 'uploading', error: undefined });
+        try {
+          let file = item.file;
+          let thumbnail: File | undefined;
+          if (item.kind === 'image') {
+            const original = file;
+            const optimized = await resize(original, 2560, 0.88);
+            file = optimized.size < original.size ? optimized : original;
+            thumbnail = await resize(original, 800, 0.82);
+          }
+          const ext = file.name.split('.').pop()?.toLowerCase() || 'bin';
+          const path = weddingId + '/' + item.id + '.' + ext;
+          const thumbnailPath = thumbnail ? weddingId + '/' + item.id + '-thumb.' + thumbnail.name.split('.').pop() : '';
+          const put = async (target: string, body: File) => {
+            const { error } = await supabase.storage.from('wedding-media').upload(target, body, { cacheControl: '31536000', contentType: body.type, upsert: false });
+            // A lost response may leave the object stored. Stable paths make retry safe.
+            if (error && String('statusCode' in error ? error.statusCode : '') !== '409' && !/already exists|duplicate/i.test(error.message)) throw error;
+          };
+          await put(path, file);
+          if (thumbnail) await put(thumbnailPath, thumbnail);
+          const result = { id: item.id, path, thumbnailPath, kind: item.kind, file };
+          patch(item.id, { status: 'done', result }); results.push(result);
+        } catch {
+          patch(item.id, { status: 'error', error: 'Yüklenemedi. Bağlantını kontrol edip tekrar dene.' });
         }
-        return;
       }
-
-      setItems((prev) => prev.map((it, idx) => idx === i ? { ...it, status: 'uploading' } : it));
-
-      const validation = validateFile(item.file);
-      const uploadFile = validation.kind === 'image' ? await optimizeImage(item.file) : item.file;
-      const path = fileToPath(weddingId, uploadFile);
-      const { error } = await supabase.storage
-        .from('wedding-media')
-        .upload(path, uploadFile, {
-          cacheControl: '31536000',
-          contentType: uploadFile.type || undefined,
-          upsert: false,
-        });
-
-      if (error) {
-        setItems((prev) => prev.map((it, idx) => idx === i ? { ...it, status: 'error' } : it));
-        toast.error(`${item.file.name} yüklenemedi`);
-        return;
-      }
-
-      setItems((prev) => prev.map((it, idx) => idx === i ? { ...it, status: 'done', progress: 100, path } : it));
-      results.push({ path, kind: validation.kind || 'image', file: uploadFile });
-    };
-
-    for (let start = 0; start < items.length; start += UPLOAD_CONCURRENCY) {
-      const indexes = Array.from({ length: Math.min(UPLOAD_CONCURRENCY, items.length - start) }, (_, offset) => start + offset);
-      await Promise.all(indexes.map(uploadItem));
-    }
-
-    setUploading(false);
-    return results;
-  }, [items, supabase, weddingId]);
-
+      if (results.length !== itemsRef.current.length) throw new Error(results.length + '/' + itemsRef.current.length + ' dosya yüklendi. Tekrar denediğinde yalnızca eksik dosyalar yüklenecek.');
+      return results;
+    } finally { busy.current = false; setUploading(false); }
+  };
   const reset = useCallback(() => {
-    items.forEach((it) => { if (it.previewUrl) URL.revokeObjectURL(it.previewUrl); });
-    setItems([]);
-  }, [items]);
-
-  const completedCount = items.filter((i) => i.status === 'done').length;
-
-  return { items, addFiles, removeItem, uploadAll, reset, uploading, completedCount, total: items.length };
+    if (busy.current) return;
+    itemsRef.current.forEach(item => { if (item.previewUrl) URL.revokeObjectURL(item.previewUrl); }); update([]);
+  }, [update]);
+  return { items, addFiles, removeItem, uploadAll, reset, uploading, completedCount: items.filter(item => item.status === 'done').length, total: items.length };
 }

@@ -19,21 +19,24 @@ export function AdminDashboard() {
   const load = async () => {
     const supabase = getSupabase();
     const [p, v, m, vc, g, pend, recentData] = await Promise.all([
-      supabase.from('memories').select('id', { count: 'exact', head: true }).eq('type', 'photo'),
-      supabase.from('memories').select('id', { count: 'exact', head: true }).eq('type', 'video'),
+      supabase.from('memory_media').select('id', { count: 'exact', head: true }).eq('media_type', 'image'),
+      supabase.from('memory_media').select('id', { count: 'exact', head: true }).eq('media_type', 'video'),
       supabase.from('memories').select('id', { count: 'exact', head: true }).eq('type', 'text'),
-      supabase.from('memories').select('id', { count: 'exact', head: true }).eq('type', 'voice'),
+      supabase.from('memory_media').select('id', { count: 'exact', head: true }).eq('media_type', 'audio'),
       supabase.from('guests').select('id', { count: 'exact', head: true }),
       supabase.from('memories').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
       supabase.from('memories').select(`*, guests (*), memory_media (*)`).order('created_at', { ascending: false }).limit(8),
     ]);
 
     // Storage
-    const { data: files } = await supabase.storage.from('wedding-media').list('', { limit: 1 });
     let storageBytes = 0;
     // Approximate via media file_size sum
-    const { data: mediaSizes } = await supabase.from('memory_media').select('file_size');
-    if (mediaSizes) storageBytes = mediaSizes.reduce((s: number, r: any) => s + (r.file_size || 0), 0);
+    for(let offset=0; ; offset+=500) {
+      const {data:mediaSizes,error} = await supabase.from('memory_media').select('file_size').order('id').range(offset,offset+499);
+      if(error) break;
+      storageBytes += (mediaSizes || []).reduce((sum,row)=>sum+(row.file_size || 0),0);
+      if(!mediaSizes || mediaSizes.length<500) break;
+    }
 
     setStats({
       photos: p.count || 0,
@@ -61,7 +64,7 @@ export function AdminDashboard() {
     { label: 'Mesajlar', value: stats.messages, icon: MessageSquare },
     { label: 'Sesli', value: stats.voices, icon: Mic },
     { label: 'Katılımcı', value: stats.guests, icon: Users },
-    { label: 'Depolama', value: formatStorage(stats.storage), icon: HardDrive },
+    { label: 'Kayıtlı medya (yaklaşık)', value: formatStorage(stats.storage), icon: HardDrive },
   ];
 
   if (loading) {
@@ -121,7 +124,7 @@ export function AdminDashboard() {
                     <ReliableImage src={url} alt={m.caption || 'Anı'} className="h-full w-full" mediaClassName="object-cover" />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center p-4 text-center">
-                      <p className="font-serif text-xs text-muted-foreground italic line-clamp-4">"{m.story || m.caption}"</p>
+                      <p className="font-serif text-xs text-muted-foreground italic line-clamp-4">&quot;{m.story || m.caption}&quot;</p>
                     </div>
                   )}
                   {m.status === 'pending' && (

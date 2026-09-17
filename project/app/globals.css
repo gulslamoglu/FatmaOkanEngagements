@@ -155,3 +155,16 @@
 ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / 0.5); }
 
 html { scroll-behavior: smooth; }
+
+/* Lightweight invitation details; no additional image downloads. */
+.celebration-home { background: #faf8f3; }
+.celebration-eyebrow { font-size: 10px; letter-spacing: .2em; text-transform: uppercase; color: hsl(var(--primary)); }
+.guide-fold summary::-webkit-details-marker { display: none; }
+.guide-fold summary::marker { content: ''; }
+.guide-plus { transition: transform .2s ease; }
+.guide-fold[open] .guide-plus { transform: rotate(45deg); }
+.celebration-home a:focus-visible, .guide-fold summary:focus-visible { outline: 2px solid currentColor; outline-offset: 5px; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

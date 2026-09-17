@@ -1,34 +1,51 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { getSupabase } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 import { Save, QrCode, Download, Loader2, Link as LinkIcon, Copy, Upload } from 'lucide-react';
 import type { Wedding } from '@/lib/types';
-import { ReliableImage } from '@/components/media/reliable-media';
+import { EventGuideEditor } from '@/components/admin/event-guide-editor';
+import { CoverPositionEditor } from '@/components/admin/cover-position-editor';
+import { engagementLocation } from '@/lib/event-guide';
+import { coverPosition } from '@/lib/cover-position';
 
 export function AdminSettings() {
   const [wedding, setWedding] = useState<Wedding | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploadingCover, setUploadingCover] = useState(false);
+  const saveLock = useRef(false);
+  const coverLock = useRef(false);
+  const previousCoverPosition = useRef(wedding?.cover_position);
+  const [coverFile, setCoverFile] = useState<File | null>(null);
+  const [coverPreview, setCoverPreview] = useState('');
+  useEffect(() => {
+    if (!coverFile) { setCoverPreview(''); return; }
+    const url = URL.createObjectURL(coverFile); setCoverPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [coverFile]);
   const [downloading, setDownloading] = useState(false);
 
   const load = useCallback(async () => {
     const supabase = getSupabase();
     const { data } = await supabase.from('weddings').select('*').eq('slug', 'fatma-okan').maybeSingle();
-    if (data) setWedding(data as Wedding);
+    if (data) {
+      if (data.slug==='fatma-okan' && (!data.location || data.location.trim().toLocaleLowerCase('tr')==='istanbul')) data.location=engagementLocation;
+      setWedding(data as Wedding);
+    }
     setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
   const handleSave = async () => {
-    if (!wedding) return;
-    setSaving(true);
+    if (!wedding || saveLock.current || coverLock.current || coverFile) return;
+    saveLock.current = true; setSaving(true);
+    try {
     const supabase = getSupabase();
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { toast.error('Oturum bulunamadı'); setSaving(false); return; }
+    if (!user) throw new Error('Oturum bulunamadı');
     const { error } = await supabase.from('weddings').update({
       user_id: user.id,
       bride_name: wedding.bride_name,
@@ -37,18 +54,20 @@ export function AdminSettings() {
       location: wedding.location,
       welcome_message: wedding.welcome_message,
       cover_image_url: wedding.cover_image_url,
+      cover_position: coverPosition(wedding.cover_position),
       accent_color: wedding.accent_color,
       gallery_enabled: wedding.gallery_enabled,
       moderation_enabled: wedding.moderation_enabled,
       live_wall_enabled: wedding.live_wall_enabled,
     }).eq('id', wedding.id).select('id').single();
-    if (error) { toast.error('Kaydedilemedi'); setSaving(false); return; }
+    if (error) throw error;
     toast.success('Ayarlar kaydedildi');
-    setSaving(false);
+    } catch(error) { toast.error('Kaydedilemedi: ' + getErrorMessage(error)); }
+    finally { saveLock.current = false; setSaving(false); }
   };
 
   const handleCoverUpload = async (file: File | undefined) => {
-    if (!file || !wedding) return;
+    if (!file || !wedding || coverLock.current || saveLock.current) return;
     if (!file.type.startsWith('image/')) {
       toast.error('Lütfen bir görsel dosyası seçin');
       return;
@@ -58,7 +77,7 @@ export function AdminSettings() {
       return;
     }
 
-    setUploadingCover(true);
+    coverLock.current = true; setUploadingCover(true);
     const supabase = getSupabase();
     const extension = file.name.split('.').pop()?.toLowerCase() || 'jpg';
     const path = `${wedding.id}/covers/${crypto.randomUUID()}.${extension}`;
@@ -76,19 +95,20 @@ export function AdminSettings() {
       const coverImageUrl = data.publicUrl;
       const { error: updateError } = await supabase
         .from('weddings')
-        .update({ cover_image_url: coverImageUrl, user_id: user.id })
+        .update({ cover_image_url: coverImageUrl, cover_position: coverPosition(wedding.cover_position), user_id: user.id })
         .eq('id', wedding.id)
         .select('id')
         .single();
       if (updateError) throw updateError;
 
-      setWedding({ ...wedding, cover_image_url: coverImageUrl });
+      setWedding(current => current ? { ...current, cover_image_url: coverImageUrl } : current);
+      setCoverFile(null);
       toast.success('Kapak fotoğrafı yüklendi');
     } catch (error) {
       const message = getErrorMessage(error);
       toast.error(`Kapak fotoğrafı yüklenemedi: ${message}`);
     } finally {
-      setUploadingCover(false);
+      coverLock.current = false; setUploadingCover(false);
     }
   };
 
@@ -96,10 +116,13 @@ export function AdminSettings() {
     setDownloading(true);
     try {
       const supabase = getSupabase();
-      const { data: memories } = await supabase
-        .from('memories')
-        .select(`*, guests (*), memory_media (*)`)
-        .order('created_at', { ascending: false });
+      const memories: import('@/lib/types').Memory[] = [];
+      for(let offset=0; ; offset+=500) {
+        const {data,error} = await supabase.from('memories').select('*, guests (*), memory_media (*)').order('created_at', {ascending:false}).order('id').range(offset,offset+499);
+        if(error) throw error;
+        memories.push(...(data || []) as unknown as import('@/lib/types').Memory[]);
+        if(!data || data.length<500) break;
+      }
 
       if (!memories || memories.length === 0) {
         toast.error('İndirilecek anı yok');
@@ -130,7 +153,7 @@ export function AdminSettings() {
         for (const media of (m as any).memory_media || []) {
           if (!media.storage_path) continue;
           const { data: blob } = await supabase.storage.from('wedding-media').download(media.storage_path);
-          if (!blob) continue;
+          if (!blob) throw new Error('Bir dosya indirilemedi. Lütfen bağlantınızı kontrol edip tekrar deneyin.');
           const ext = media.storage_path.split('.').pop() || 'bin';
           if (media.media_type === 'image') {
             photos.push({ name: `photo_${photoIdx++}_${date}.${ext}`, blob });
@@ -230,17 +253,8 @@ export function AdminSettings() {
             </div>
             <div className="sm:col-span-2">
               <label className="mb-2 block text-sm font-medium text-charcoal">Kapak Fotoğrafı</label>
-              {wedding.cover_image_url && (
-                <div className="mb-3 overflow-hidden rounded-xl border border-border bg-muted">
-                  <ReliableImage
-                    src={wedding.cover_image_url}
-                    alt="Kapak fotoğrafı önizlemesi"
-                    eager
-                    className="h-48 w-full sm:h-64"
-                    mediaClassName="object-cover"
-                  />
-                </div>
-              )}
+              {(coverPreview || wedding.cover_image_url) && <CoverPositionEditor src={coverPreview || wedding.cover_image_url} value={wedding.cover_position} disabled={uploadingCover || saving} onChange={position=>setWedding({...wedding,cover_position:position})} />}
+              {coverFile && <div className="mb-4 flex flex-wrap items-center gap-3"><button type="button" disabled={uploadingCover || saving} onClick={()=>void handleCoverUpload(coverFile)} className="rounded-full bg-primary px-5 py-3 text-sm text-primary-foreground disabled:opacity-50">{uploadingCover?'Yükleniyor…':'Bu kapak ve konumu kaydet'}</button><button type="button" disabled={uploadingCover} onClick={()=>{setCoverFile(null);setWedding({...wedding,cover_position:previousCoverPosition.current});}} className="text-sm text-muted-foreground">Seçimi iptal et</button><p className="w-full text-xs text-muted-foreground">Yeni fotoğraf henüz yüklenmedi. Konumunu ayarlayıp kaydet.</p></div>}
               <label className={`inline-flex cursor-pointer items-center gap-2 rounded-full border border-border bg-background px-5 py-2.5 text-sm font-medium text-charcoal transition-colors hover:bg-secondary ${uploadingCover ? 'pointer-events-none opacity-50' : ''}`}>
                 {uploadingCover ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                 {uploadingCover ? 'Yükleniyor...' : 'Kapak fotoğrafı yükle'}
@@ -250,7 +264,12 @@ export function AdminSettings() {
                   className="sr-only"
                   disabled={uploadingCover}
                   onChange={(e) => {
-                    void handleCoverUpload(e.target.files?.[0]);
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      if (!/^image\/(jpeg|png|webp|avif)$/.test(file.type) || !file.size) toast.error('JPG, PNG, WebP veya AVIF seçin.');
+                      else if (file.size > 10 * 1024 * 1024) toast.error('Kapak fotoğrafı en fazla 10 MB olabilir.');
+                      else { if(!coverFile) previousCoverPosition.current=wedding.cover_position; setCoverPreview(''); setCoverFile(file); setWedding({...wedding,cover_position:{x:50,y:50}}); }
+                    }
                     e.target.value = '';
                   }}
                 />
@@ -277,13 +296,15 @@ export function AdminSettings() {
           </div>
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || uploadingCover || !!coverFile}
             className="mt-5 flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-medium text-primary-foreground transition-all hover:opacity-90 disabled:opacity-50"
           >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             {saving ? 'Kaydediliyor...' : 'Kaydet'}
           </button>
         </section>
+
+        <EventGuideEditor key={wedding.id} wedding={wedding} />
 
         {/* Feature Toggles */}
         <section className="rounded-2xl border border-border bg-card p-6">
@@ -310,7 +331,7 @@ export function AdminSettings() {
           </div>
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || uploadingCover || !!coverFile}
             className="mt-5 flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-medium text-primary-foreground transition-all hover:opacity-90 disabled:opacity-50"
           >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}

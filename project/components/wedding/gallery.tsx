@@ -1,379 +1,169 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
-import { Play, Heart, X, ChevronLeft, ChevronRight, Shuffle, Mic, Quote, Loader2 } from 'lucide-react';
+import Link from 'next/link';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { Play, Heart, ChevronLeft, ChevronRight, Shuffle, Mic, Quote, Loader2, Camera, ArrowUpRight, Sparkles, X } from 'lucide-react';
+import * as Dialog from '@radix-ui/react-dialog';
+import { toast } from 'sonner';
 import { getSupabase } from '@/lib/supabase/client';
 import { useSessionId } from '@/lib/hooks/use-session-id';
 import { formatDateLong } from '@/lib/format';
 import type { Memory, Wedding } from '@/lib/types';
 import { getMediaUrl } from '@/lib/media-url';
+import { expandMemories, type GalleryItem } from '@/lib/gallery-items';
 import { ReliableAudio, ReliableImage, ReliableVideo } from '@/components/media/reliable-media';
 
-type Filter = 'all' | 'photo' | 'video' | 'text' | 'voice';
-type Sort = 'newest' | 'oldest' | 'random';
+type Filter = 'all' | 'photo' | 'video';
+type Sort = 'newest' | 'oldest';
 const PAGE_SIZE = 24;
-
-interface Props {
-  wedding: Wedding;
-  initialMemories: Memory[];
+const filters: { key: Filter; label: string }[] = [
+  { key: 'all', label: 'Hepsi' }, { key: 'photo', label: 'Fotoğraflar' },
+  { key: 'video', label: 'Videolar' },
+];
+async function fetchPage(weddingId: string, filter: Filter, sort: Sort, offset: number) {
+  let query = getSupabase().from('memories').select('*, guests (*), memory_media (*)')
+    .eq('wedding_id', weddingId).eq('status', 'approved').in('type', ['photo', 'video']);
+  if (filter !== 'all') query = query.eq('type', filter);
+  const { data, error } = await query.order('created_at', { ascending: sort === 'oldest' })
+    .order('id', { ascending: sort === 'oldest' }).range(offset, offset + PAGE_SIZE);
+  if (error) throw error;
+  return (data || []) as unknown as Memory[];
 }
 
-export function Gallery({ wedding, initialMemories }: Props) {
-  const [memories, setMemories] = useState<Memory[]>(initialMemories.slice(0, PAGE_SIZE));
+export function Gallery({ wedding, initialMemories }: { wedding: Wedding; initialMemories: Memory[] }) {
+  const [memories, setMemories] = useState(initialMemories.slice(0, PAGE_SIZE));
   const [hasMore, setHasMore] = useState(initialMemories.length > PAGE_SIZE);
+  const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [filter, setFilter] = useState<Filter>('all');
   const [sort, setSort] = useState<Sort>('newest');
-  const [lightbox, setLightbox] = useState<number | null>(null);
+  const [reload, setReload] = useState(0);
+  const [openedId, setOpenedId] = useState<string | null>(null);
   const sessionId = useSessionId();
   const [reacted, setReacted] = useState<Set<string>>(new Set());
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const reactionLocks = useRef(new Set<string>());
+  const pageLock = useRef(false);
+  const pageOffset = useRef(Math.min(initialMemories.length, PAGE_SIZE));
+  const generation = useRef(0);
+  const currentQuery = useRef(wedding.id + ':all:newest:0');
+  const cards = useMemo(() => expandMemories(memories.filter(memory => memory.type === 'photo' || memory.type === 'video')).filter(card => card.type === 'photo' || card.type === 'video'), [memories]);
+  const openedIndex = cards.findIndex(card => card.cardId === openedId);
+  const opened = cards[openedIndex];
+  const opener = useRef<HTMLElement | null>(null);
 
-  // Load reactions
   useEffect(() => {
-    if (initialMemories.length === 0) return;
-    const supabase = getSupabase();
-    const ids = initialMemories.map((m) => m.id);
-    supabase.from('reactions').select('memory_id, session_id').in('memory_id', ids).then(({ data }) => {
-      if (!data) return;
-      const c: Record<string, number> = {};
-      const r = new Set<string>();
-      data.forEach((rx) => {
-        c[rx.memory_id] = (c[rx.memory_id] || 0) + 1;
-        if (rx.session_id === sessionId) r.add(rx.memory_id);
-      });
-      setCounts(c);
-      setReacted(r);
+    const key = wedding.id + ':' + filter + ':' + sort + ':' + reload;
+    if (currentQuery.current === key) return;
+    currentQuery.current = key;
+    const request = ++generation.current;
+    pageLock.current = false;
+    setLoadingMore(false); setLoading(true); setLoadError(false); setOpenedId(null); setMemories([]);
+    void fetchPage(wedding.id, filter, sort, 0).then(page => {
+      if (request !== generation.current) return;
+      pageOffset.current = Math.min(page.length, PAGE_SIZE);
+      setMemories(page.slice(0, PAGE_SIZE)); setHasMore(page.length > PAGE_SIZE);
+    }).catch(() => { if (request === generation.current) { setLoadError(true); setHasMore(false); } })
+      .finally(() => { if (request === generation.current) setLoading(false); });
+  }, [wedding.id, filter, sort, reload]);
+
+  useEffect(() => {
+    let active = true;
+    if (!memories.length || !sessionId) return;
+    const ids = memories.map(memory => memory.id);
+    void getSupabase().from('reactions').select('memory_id, session_id').in('memory_id', ids).then(({ data, error }) => {
+      if (!active || error || !data) return;
+      const nextCounts: Record<string, number> = {};
+      const nextReacted = new Set<string>();
+      data.forEach(reaction => { nextCounts[reaction.memory_id] = (nextCounts[reaction.memory_id] || 0) + 1; if (reaction.session_id === sessionId) nextReacted.add(reaction.memory_id); });
+      setCounts(nextCounts); setReacted(nextReacted);
     });
-  }, [initialMemories, sessionId]);
+    return () => { active = false; };
+  }, [memories, sessionId]);
 
-  const filtered = useMemo(() => {
-    let list = memories;
-    if (filter !== 'all') list = list.filter((m) => m.type === filter);
-    if (sort === 'newest') list = [...list].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    else if (sort === 'oldest') list = [...list].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-    else if (sort === 'random') list = [...list].sort(() => Math.random() - 0.5);
-    return list;
-  }, [memories, filter, sort]);
-
-  const toggleReaction = async (memoryId: string) => {
-    const supabase = getSupabase();
-    if (reacted.has(memoryId)) {
-      setReacted((prev) => { const n = new Set(prev); n.delete(memoryId); return n; });
-      setCounts((prev) => ({ ...prev, [memoryId]: Math.max(0, (prev[memoryId] || 1) - 1) }));
-      await supabase.from('reactions').delete().eq('memory_id', memoryId).eq('session_id', sessionId);
-    } else {
-      setReacted((prev) => new Set(prev).add(memoryId));
-      setCounts((prev) => ({ ...prev, [memoryId]: (prev[memoryId] || 0) + 1 }));
-      await supabase.from('reactions').insert({ memory_id: memoryId, session_id: sessionId, reaction_type: 'love' });
-    }
+  const toggleReaction = async (id: string) => {
+    if (!sessionId || reactionLocks.current.has(id)) return;
+    reactionLocks.current.add(id);
+    const wasReacted = reacted.has(id);
+    const client = getSupabase();
+    try {
+      const { error } = wasReacted
+        ? await client.from('reactions').delete().eq('memory_id', id).eq('session_id', sessionId)
+        : await client.from('reactions').insert({ memory_id: id, session_id: sessionId, reaction_type: 'love' });
+      if (error) throw error;
+      setReacted(current => { const next = new Set(current); if (wasReacted) next.delete(id); else next.add(id); return next; });
+      setCounts(current => ({ ...current, [id]: Math.max(0, (current[id] || 0) + (wasReacted ? -1 : 1)) }));
+    } catch { toast.error('Beğenin kaydedilemedi. Tekrar deneyebilirsin.'); }
+    finally { reactionLocks.current.delete(id); }
   };
-
-  const showRandom = () => {
-    if (filtered.length === 0) return;
-    const idx = Math.floor(Math.random() * filtered.length);
-    setLightbox(idx);
-  };
-
-  const next = () => setLightbox((i) => i === null ? null : (i + 1) % filtered.length);
-  const prev = () => setLightbox((i) => i === null ? null : (i - 1 + filtered.length) % filtered.length);
-
   const loadMore = async () => {
-    if (loadingMore || !hasMore) return;
-    setLoadingMore(true);
-    const supabase = getSupabase();
-    const from = memories.length;
-    const { data, error } = await supabase
-      .from('memories')
-      .select('*, guests (*), memory_media (*)')
-      .eq('wedding_id', wedding.id)
-      .eq('status', 'approved')
-      .order('created_at', { ascending: false })
-      .range(from, from + PAGE_SIZE);
-
-    if (error) {
-      setLoadingMore(false);
-      return;
-    }
-    const page = (data || []) as unknown as Memory[];
-    setMemories((current) => [...current, ...page.slice(0, PAGE_SIZE)]);
-    setHasMore(page.length > PAGE_SIZE);
-    setLoadingMore(false);
+    if (loading || pageLock.current || !hasMore) return;
+    pageLock.current = true; setLoadingMore(true);
+    const request = generation.current;
+    try {
+      const page = await fetchPage(wedding.id, filter, sort, pageOffset.current);
+      if (request !== generation.current) return;
+      pageOffset.current += Math.min(page.length, PAGE_SIZE);
+      setMemories(current => { const ids = new Set(current.map(m => m.id)); return [...current, ...page.slice(0, PAGE_SIZE).filter(m => !ids.has(m.id))]; });
+      setHasMore(page.length > PAGE_SIZE);
+    } catch { if (request === generation.current) toast.error('Anılar yüklenemedi. Tekrar deneyebilirsin.'); }
+    finally { if (request === generation.current) { pageLock.current = false; setLoadingMore(false); } }
   };
+  const openCard = (id: string) => { opener.current = document.activeElement as HTMLElement; setOpenedId(id); };
+  const move = useCallback((direction: number) => {
+    setOpenedId(current => { const index = cards.findIndex(card => card.cardId === current); return cards.length ? cards[(index + direction + cards.length) % cards.length].cardId : null; });
+  }, [cards]);
 
-  const filters: { key: Filter; label: string }[] = [
-    { key: 'all', label: 'Tümü' },
-    { key: 'photo', label: 'Fotoğraflar' },
-    { key: 'video', label: 'Videolar' },
-    { key: 'text', label: 'Mesajlar' },
-    { key: 'voice', label: 'Ses' },
-  ];
-
-  if (memories.length === 0) {
-    return (
-      <div className="flex min-h-[70svh] flex-col items-center justify-center px-6 text-center">
-        <div className="max-w-sm animate-fade-up">
-          <div className="mx-auto mb-6 h-20 w-20 rounded-full bg-secondary" />
-          <h1 className="font-serif text-3xl font-light text-charcoal">İlk anı henüz bırakılmadı.</h1>
-          <p className="mt-3 font-serif text-lg text-muted-foreground font-light italic">
-            "Belki ilk kare senden gelir."
-          </p>
-          <a
-            href={`/w/${wedding.slug}/upload`}
-            className="mt-8 inline-flex items-center gap-2 rounded-full bg-primary px-8 py-3.5 text-sm font-medium text-primary-foreground transition-all hover:opacity-90"
-          >
-            İlk Anıyı Bırak
-          </a>
-        </div>
+  return <main className="min-h-[80svh] bg-[#faf8f3] px-4 py-9 sm:px-8 sm:py-14">
+    <div className="mx-auto max-w-6xl">
+      <header className="relative overflow-hidden rounded-[2rem] border border-[#dce2d5] bg-[#e9eee5] px-6 py-8 sm:px-10 sm:py-12">
+        <Sparkles aria-hidden="true" className="absolute right-6 top-6 h-8 w-8 text-[#64745b]/25 sm:right-10 sm:h-12 sm:w-12" strokeWidth={1} />
+        <p className="text-[10px] uppercase tracking-[0.25em] text-[#526349]">{wedding.bride_name} &amp; {wedding.groom_name} · Hatıra albümü</p>
+        <h1 className="mt-4 font-serif text-4xl font-light leading-tight sm:text-6xl">Bir gece.<br className="sm:hidden" /> <span className="italic text-[#64745b]">Bir sürü güzel an.</span></h1>
+        <p className="mt-4 max-w-lg text-sm leading-relaxed text-muted-foreground">Kahkahalar, sarılmalar, güzel kareler… Bu gecenin en güzel tarafı, sizin gözünüzden gördüklerimiz.</p>
+        <div className="mt-6 flex flex-wrap items-center gap-3"><Link href={'/w/'+wedding.slug+'/upload'} className="inline-flex items-center gap-2 rounded-full bg-[#526349] px-5 py-3 text-xs font-medium text-white transition-colors hover:bg-[#414f39]"><Camera className="h-4 w-4" /> Sen de bir anı ekle <ArrowUpRight className="h-4 w-4" /></Link><button type="button" disabled={!cards.length || loading} onClick={() => openCard(cards[Math.floor(Math.random()*cards.length)].cardId)} className="inline-flex items-center gap-2 rounded-full border border-[#64745b]/20 bg-white/50 px-5 py-3 text-xs text-[#526349] disabled:opacity-40"><Shuffle className="h-4 w-4" /> Bana bir anı seç</button></div>
+      </header>
+      <div className="my-7 flex flex-wrap items-center justify-between gap-4">
+        <div aria-label="Anı türü" className="no-scrollbar flex max-w-full gap-2 overflow-x-auto pb-1">{filters.map(item=><button type="button" key={item.key} aria-pressed={filter===item.key} onClick={()=>setFilter(item.key)} className={'whitespace-nowrap rounded-full border px-4 py-2.5 text-xs transition-colors '+(filter===item.key?'border-[#526349] bg-[#526349] text-white':'border-border bg-card text-muted-foreground hover:border-primary/40')}>{item.label}</button>)}</div>
+        <div className="flex items-center gap-3"><p className="text-xs text-muted-foreground" aria-live="polite">{loading ? 'Anılar yükleniyor…' : cards.length + ' anı gösteriliyor'}</p><select aria-label="Anıları sırala" value={sort} onChange={event=>setSort(event.target.value as Sort)} className="rounded-full border border-border bg-card px-3 py-2 text-xs text-charcoal"><option value="newest">En yeniler</option><option value="oldest">İlk anılar</option></select></div>
       </div>
-    );
-  }
-
-  return (
-    <div className="px-4 py-6">
-      <div className="mx-auto max-w-5xl">
-        <h1 className="mb-1 font-serif text-3xl font-light text-charcoal">Anılar</h1>
-        <p className="mb-6 text-sm text-muted-foreground font-light">{memories.length} anı paylaşıldı</p>
-
-        {/* Controls */}
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div className="no-scrollbar flex gap-2 overflow-x-auto">
-            {filters.map((f) => (
-              <button
-                key={f.key}
-                onClick={() => setFilter(f.key)}
-                className={`whitespace-nowrap rounded-full px-4 py-2 text-xs font-medium transition-colors ${
-                  filter === f.key ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground hover:text-charcoal'
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <select
-              value={sort}
-              onChange={(e) => setSort(e.target.value as Sort)}
-              className="rounded-full border border-border bg-card px-4 py-2 text-xs font-medium text-charcoal outline-none"
-            >
-              <option value="newest">En Yeniler</option>
-              <option value="oldest">En Eskiler</option>
-              <option value="random">Rastgele</option>
-            </select>
-            <button
-              onClick={showRandom}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-4 py-2 text-xs font-medium text-charcoal transition-colors hover:bg-secondary"
-            >
-              <Shuffle className="h-3.5 w-3.5" /> Rastgele
-            </button>
-          </div>
-        </div>
-
-        {/* Masonry grid */}
-        <div className="masonry columns-2 md:columns-3 lg:columns-4">
-          {filtered.map((m, i) => (
-            <MemoryCard
-              key={m.id}
-              memory={m}
-              onOpen={() => setLightbox(i)}
-              reacted={reacted.has(m.id)}
-              count={counts[m.id] || 0}
-              onReact={() => toggleReaction(m.id)}
-            />
-          ))}
-        </div>
-        {hasMore && (
-          <div className="mt-8 flex justify-center">
-            <button
-              type="button"
-              onClick={loadMore}
-              disabled={loadingMore}
-              className="inline-flex min-w-40 items-center justify-center gap-2 rounded-full border border-border bg-card px-6 py-3 text-sm font-medium text-charcoal shadow-sm transition-all hover:-translate-y-0.5 hover:bg-secondary hover:shadow-md disabled:pointer-events-none disabled:opacity-60"
-            >
-              {loadingMore && <Loader2 className="h-4 w-4 animate-spin" />}
-              {loadingMore ? 'Yükleniyor...' : 'Daha fazla anı göster'}
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Lightbox */}
-      {lightbox !== null && filtered[lightbox] && (
-        <Lightbox
-          memory={filtered[lightbox]}
-          reacted={reacted.has(filtered[lightbox].id)}
-          count={counts[filtered[lightbox].id] || 0}
-          onReact={() => toggleReaction(filtered[lightbox].id)}
-          onClose={() => setLightbox(null)}
-          onNext={next}
-          onPrev={prev}
-        />
-      )}
+      {loading ? <div className="flex min-h-48 items-center justify-center" role="status"><Loader2 className="h-6 w-6 animate-spin text-primary" /><span className="sr-only">Anılar yükleniyor</span></div> : loadError ? <div className="rounded-3xl border border-border bg-card p-10 text-center"><p className="text-sm text-muted-foreground">Anılara şu anda ulaşamadık.</p><button onClick={()=>setReload(value=>value+1)} className="mt-4 rounded-full bg-primary px-5 py-3 text-sm text-primary-foreground">Yeniden dene</button></div> : <>
+        {!cards.length && <div className="rounded-3xl border border-dashed border-primary/20 px-6 py-14 text-center"><Heart className="mx-auto h-8 w-8 text-primary/40" strokeWidth={1.2} /><h2 className="mt-5 font-serif text-3xl">{filter==='all' ? 'İlk güzel anı senden gelsin.' : 'Burada henüz bir anı yok.'}</h2><p className="mt-3 text-sm text-muted-foreground">{hasMore ? 'Diğer anıları görmek için daha fazlasını yükleyebilirsin.' : 'Paylaşılan ve onaylanan anılar burada yerini alacak.'}</p></div>}
+        <div className="masonry columns-2 gap-4 md:columns-3 lg:columns-4">{cards.map((card,index)=><MemoryCard key={card.cardId} memory={card} index={index} onOpen={()=>openCard(card.cardId)} reacted={reacted.has(card.id)} count={counts[card.id]||0} onReact={()=>{void toggleReaction(card.id);}} />)}</div>
+        {hasMore && <div className="mt-8 text-center"><button type="button" onClick={loadMore} disabled={loadingMore} className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-card px-7 py-3.5 text-sm text-primary disabled:opacity-50">{loadingMore && <Loader2 className="h-4 w-4 animate-spin" />}{loadingMore?'Anılar geliyor…':'Biraz daha anı'}</button></div>}
+      </>}
+      <p className="mt-12 text-center font-serif text-lg italic text-muted-foreground">Bu hikâyede hepimizin bir karesi var.</p>
     </div>
-  );
+    <Dialog.Root open={!!opened} onOpenChange={open=>{if(!open)setOpenedId(null);}}>{opened && <Dialog.Portal><Dialog.Overlay className="fixed inset-0 z-50 bg-[#161c14]/95 backdrop-blur-sm" /><Dialog.Content onCloseAutoFocus={event=>{event.preventDefault();opener.current?.focus();}} className="fixed inset-0 z-50 flex flex-col items-center justify-center overflow-y-auto p-4 text-white outline-none sm:p-8">
+      <Dialog.Title className="sr-only">{opened.caption || 'Nişan hatırası'}</Dialog.Title><Dialog.Description className="sr-only">{openedIndex+1} / {cards.length}. Önceki ve sonraki anıya geçmek için ok düğmelerini kullanabilirsin.</Dialog.Description>
+      <Dialog.Close aria-label="Anıyı kapat" className="absolute right-4 top-4 z-10 rounded-full bg-white/15 p-3 hover:bg-white/25"><X className="h-5 w-5" /></Dialog.Close>
+      <LightboxMedia key={opened.cardId} memory={opened} onMove={move} />
+      <div className="mt-3 flex items-center gap-5"><button aria-label="Önceki anı" onClick={()=>move(-1)} className="rounded-full bg-white/10 p-3"><ChevronLeft className="h-5 w-5" /></button><span className="text-xs tabular-nums text-white/70">{openedIndex+1} / {cards.length}</span><button aria-label="Sonraki anı" onClick={()=>move(1)} className="rounded-full bg-white/10 p-3"><ChevronRight className="h-5 w-5" /></button></div>
+      <div className="mt-4 max-w-xl text-center">{opened.caption && <p className="font-serif text-xl">{opened.caption}</p>}{opened.story && opened.type!=='text' && <p className="mt-2 max-h-16 overflow-y-auto text-sm text-white/75">{opened.story}</p>}<p className="mt-2 text-xs text-white/60">{guestName(opened)} · {formatDateLong(opened.created_at)}</p><button aria-pressed={reacted.has(opened.id)} onClick={()=>{void toggleReaction(opened.id);}} className="mt-3 inline-flex items-center gap-2 rounded-full bg-white/10 px-5 py-2 text-xs"><Heart className={'h-4 w-4 '+(reacted.has(opened.id)?'fill-white':'')} /> Bu anı sevdim {counts[opened.id] ? '· '+counts[opened.id] : ''}</button></div>
+    </Dialog.Content></Dialog.Portal>}</Dialog.Root>
+  </main>;
 }
-
-function MemoryCard({
-  memory, onOpen, reacted, count, onReact,
-}: {
-  memory: Memory;
-  onOpen: () => void;
-  reacted: boolean;
-  count: number;
-  onReact: () => void;
-}) {
+function guestName(memory: Memory) { return memory.guests?.is_anonymous ? 'Anonim' : memory.guests?.display_name || 'Bir misafir'; }
+function MemoryCard({ memory, index, onOpen, reacted, count, onReact }: { memory: GalleryItem; index: number; onOpen:()=>void; reacted:boolean; count:number; onReact:()=>void }) {
   const media = memory.memory_media?.[0];
   const url = getMediaUrl(media?.thumbnail_path || media?.storage_path);
-  const guestName = memory.guests?.display_name || (memory.guests?.is_anonymous ? 'Anonim' : 'Bir misafir');
-
-  if (memory.type === 'text') {
-    return (
-      <div
-        onClick={onOpen}
-        className="group relative min-h-56 cursor-pointer overflow-hidden rounded-2xl border border-primary/15 bg-gradient-to-br from-card via-secondary/45 to-accent/40 p-6 transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-lg"
-      >
-        <div className="absolute -right-8 -top-8 h-28 w-28 rounded-full bg-primary/5 transition-transform duration-500 group-hover:scale-125" />
-        <Quote className="h-8 w-8 text-primary/30" strokeWidth={1.5} />
-        <p className="relative mt-4 font-serif text-xl font-light leading-relaxed text-charcoal line-clamp-4 italic">
-          {memory.story}
-        </p>
-        <div className="relative mt-6 flex items-end justify-between gap-3 border-t border-primary/10 pt-4">
-          <div>
-            <p className="text-xs font-medium text-charcoal">{guestName}</p>
-            <p className="mt-0.5 text-[10px] text-muted-foreground">{formatDateLong(memory.created_at)}</p>
-          </div>
-          <button onClick={(e) => { e.stopPropagation(); onReact(); }} className="flex items-center gap-1 transition-colors hover:text-primary">
-            <Heart className={`h-3.5 w-3.5 ${reacted ? 'fill-primary text-primary' : ''}`} />
-            {count > 0 && count}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (memory.type === 'voice') {
-    return (
-      <div
-        onClick={onOpen}
-        className="group flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-border bg-secondary/50 p-8 text-center transition-all hover:shadow-md"
-      >
-        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
-          <Mic className="h-7 w-7 text-primary" />
-        </div>
-        <p className="mt-4 text-sm font-medium text-charcoal">Sesli Mesaj</p>
-        <p className="mt-1 text-xs text-muted-foreground">{guestName}</p>
-        <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
-          <button onClick={(e) => { e.stopPropagation(); onReact(); }} className="flex items-center gap-1 transition-colors hover:text-primary">
-            <Heart className={`h-3.5 w-3.5 ${reacted ? 'fill-primary text-primary' : ''}`} />
-            {count > 0 && count}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="group relative aspect-[4/5] overflow-hidden rounded-2xl border border-border/60 bg-muted cursor-pointer shadow-sm" onClick={onOpen}>
-      {url && media?.media_type === 'video' ? (
-        <ReliableVideo src={url} className="h-full w-full" mediaClassName="object-cover group-hover:scale-105" />
-      ) : url && (
-        <ReliableImage src={url} alt={memory.caption || 'Anı'} className="h-full w-full" mediaClassName="object-cover group-hover:scale-105" />
-      )}
-      {media?.media_type === 'video' && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/20">
-          <Play className="h-10 w-10 text-white/90" fill="currentColor" />
-        </div>
-      )}
-      <div className="absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/60 to-transparent p-3 opacity-0 transition-opacity group-hover:opacity-100">
-        {memory.caption && <p className="text-xs font-medium text-white line-clamp-1">{memory.caption}</p>}
-        <p className="text-[10px] text-white/70">{guestName}</p>
-      </div>
-      <button
-        onClick={(e) => { e.stopPropagation(); onReact(); }}
-        className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-white/80 px-2 py-1 text-xs backdrop-blur-sm transition-colors hover:bg-white"
-      >
-        <Heart className={`h-3.5 w-3.5 ${reacted ? 'fill-primary text-primary' : 'text-charcoal'}`} />
-        {count > 0 && <span className="text-charcoal">{count}</span>}
-      </button>
-    </div>
-  );
+  const isText = memory.type==='text'; const isVoice = memory.type==='voice'; const isVideo=memory.type==='video';
+  return <article className="group overflow-hidden rounded-2xl border border-border/70 bg-card p-2 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-md">
+    <button type="button" onClick={onOpen} aria-label={(memory.caption || (isText?'Mesaj':isVoice?'Ses kaydı':isVideo?'Video':'Fotoğraf'))+' — '+guestName(memory)} className={'relative block w-full overflow-hidden rounded-xl text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary '+(isText?'bg-[#f1ecdf] p-4 sm:p-5':isVoice?'bg-[#e9eee5] p-5 text-center':index%3===0?'aspect-[3/4] bg-secondary':'aspect-[4/5] bg-secondary')}>
+      {isText ? <><Quote className="h-6 w-6 text-primary/30" strokeWidth={1.5} /><p className="mt-4 font-serif text-xl italic leading-relaxed text-charcoal line-clamp-6">{memory.story}</p><span className="mt-5 block text-[9px] uppercase tracking-widest text-primary/60">Kalpten gelenler</span></> : isVoice ? <><Mic className="mx-auto mt-3 h-8 w-8 text-[#64745b]" strokeWidth={1.5} /><div aria-hidden="true" className="my-5 flex h-8 items-center justify-center gap-1">{[10,20,14,30,22,32,12,24,16].map((height,i)=><span key={i} className="w-1 rounded-full bg-[#64745b]/40" style={{height}} />)}</div><p className="font-serif text-xl">Bir ses, bir hatıra</p><p className="mb-3 mt-2 text-[10px] text-[#526349]">Dinlemek için dokun</p></> : isVideo ? <div className="flex h-full flex-col items-center justify-center bg-gradient-to-br from-[#d9dfd0] to-[#ede2cd]"><span className="flex h-14 w-14 items-center justify-center rounded-full border border-white/70 bg-white/40"><Play className="ml-1 h-6 w-6 text-[#526349]" fill="currentColor" /></span><p className="mt-5 font-serif text-xl text-[#526349]">Hareketli bir hatıra</p><p className="mt-2 text-[10px] text-[#526349]/80">Oynatmak için dokun</p></div> : url ? <ReliableImage src={url} alt={memory.caption || 'Nişan fotoğrafı'} className="h-full w-full" mediaClassName="object-cover transition-transform duration-500 group-hover:scale-[1.03]" /> : null}
+    </button>
+    <div className="flex items-center justify-between gap-2 px-1 py-3 sm:px-2"><div className="min-w-0"><p className="truncate text-[11px] font-medium text-charcoal">{guestName(memory)}</p>{memory.caption && <p className="mt-1 truncate text-[10px] text-muted-foreground">{memory.caption}</p>}</div><button type="button" aria-label="Bu anıyı beğen" aria-pressed={reacted} onClick={onReact} className="flex min-h-[40px] min-w-[40px] shrink-0 items-center justify-center gap-1 rounded-full text-primary transition-colors hover:bg-secondary"><Heart className={'h-4 w-4 '+(reacted?'fill-primary':'')} />{count>0 && <span className="text-[10px]">{count}</span>}</button></div>
+  </article>;
 }
-
-function Lightbox({
-  memory, reacted, count, onReact, onClose, onNext, onPrev,
-}: {
-  memory: Memory;
-  reacted: boolean;
-  count: number;
-  onReact: () => void;
-  onClose: () => void;
-  onNext: () => void;
-  onPrev: () => void;
-}) {
-  const media = memory.memory_media?.[0];
-  const url = getMediaUrl(media?.storage_path);
-  const guestName = memory.guests?.display_name || (memory.guests?.is_anonymous ? 'Anonim' : 'Bir misafir');
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-      if (e.key === 'ArrowRight') onNext();
-      if (e.key === 'ArrowLeft') onPrev();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [onClose, onNext, onPrev]);
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 animate-fade-in" onClick={onClose}>
-      <button className="absolute right-4 top-4 z-10 rounded-full bg-white/10 p-2 text-white backdrop-blur-sm hover:bg-white/20" onClick={onClose}>
-        <X className="h-6 w-6" />
-      </button>
-      <button className="absolute left-4 top-1/2 -translate-y-1/2 z-10 rounded-full bg-white/10 p-2 text-white backdrop-blur-sm hover:bg-white/20" onClick={(e) => { e.stopPropagation(); onPrev(); }}>
-        <ChevronLeft className="h-6 w-6" />
-      </button>
-      <button className="absolute right-4 top-1/2 -translate-y-1/2 z-10 rounded-full bg-white/10 p-2 text-white backdrop-blur-sm hover:bg-white/20" onClick={(e) => { e.stopPropagation(); onNext(); }}>
-        <ChevronRight className="h-6 w-6" />
-      </button>
-
-      <div className="flex max-h-full w-full max-w-3xl flex-col items-center" onClick={(e) => e.stopPropagation()}>
-        <div className="flex max-h-[70svh] w-full items-center justify-center p-4">
-          {media?.media_type === 'video' && url ? (
-            <ReliableVideo src={url} controls className="h-[70svh] w-full max-w-3xl rounded-xl bg-black" mediaClassName="object-contain" />
-          ) : media?.media_type === 'audio' || memory.type === 'voice' ? (
-            <div className="flex flex-col items-center gap-6 p-12">
-              <div className="flex h-32 w-32 items-center justify-center rounded-full bg-white/10">
-                <Mic className="h-14 w-14 text-white" />
-              </div>
-              {url && <ReliableAudio src={url} />}
-            </div>
-          ) : url ? (
-            <ReliableImage src={url} alt={memory.caption || 'Anı'} eager className="h-[70svh] w-full max-w-3xl rounded-xl bg-black" mediaClassName="object-contain" />
-          ) : memory.type === 'text' ? (
-            <div className="mx-5 max-w-xl rounded-3xl border border-white/10 bg-white/10 p-8 text-center shadow-2xl backdrop-blur-md sm:p-12">
-              <Quote className="mx-auto h-10 w-10 text-white/30" strokeWidth={1.5} />
-              <p className="mt-6 font-serif text-2xl font-light leading-relaxed text-white italic sm:text-3xl">{memory.story}</p>
-              <div className="mx-auto mt-7 h-px w-12 bg-white/25" />
-              <p className="mt-4 text-sm text-white/65">{guestName}</p>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="w-full max-w-2xl rounded-b-lg bg-black/40 p-5 text-center backdrop-blur-sm">
-          {memory.caption && <p className="font-serif text-lg text-white font-light">{memory.caption}</p>}
-          {memory.story && memory.type !== 'text' && (
-            <p className="mt-2 text-sm text-white/70 italic font-light">"{memory.story}"</p>
-          )}
-          <p className="mt-3 text-xs text-white/50">{guestName} · {formatDateLong(memory.created_at)}</p>
-          <button
-            onClick={(e) => { e.stopPropagation(); onReact(); }}
-            className="mt-4 inline-flex items-center gap-2 rounded-full bg-white/10 px-5 py-2.5 text-sm font-medium text-white backdrop-blur-sm transition-colors hover:bg-white/20"
-          >
-            <Heart className={`h-4 w-4 ${reacted ? 'fill-white' : ''}`} />
-            {reacted ? 'Sevildi' : 'Bu anı sevdim'} {count > 0 && `· ${count}`}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+function LightboxMedia({ memory, onMove }: { memory: GalleryItem; onMove:(direction:number)=>void }) {
+  const media=memory.memory_media?.[0]; const url=getMediaUrl(media?.storage_path);
+  useEffect(()=>{
+    const handle=(event:KeyboardEvent)=>{if(event.target instanceof HTMLMediaElement)return;if(event.key==='ArrowRight'){event.preventDefault();onMove(1);}if(event.key==='ArrowLeft'){event.preventDefault();onMove(-1);}};
+    window.addEventListener('keydown',handle);return()=>window.removeEventListener('keydown',handle);
+  },[onMove]);
+  if(memory.type==='text') return <div className="mt-10 max-h-[50svh] w-full max-w-xl overflow-y-auto rounded-3xl border border-white/15 bg-white/10 p-8 text-center"><Quote className="mx-auto h-8 w-8 text-white/30" /><p className="mt-5 whitespace-pre-line font-serif text-2xl italic leading-relaxed">{memory.story}</p></div>;
+  if(memory.type==='voice') return <div className="flex w-full flex-col items-center gap-7 py-12"><Mic className="h-16 w-16 text-white/70" />{url && <ReliableAudio src={url} />}</div>;
+  if(memory.type==='video') return url ? <ReliableVideo src={url} controls className="mt-9 h-[53svh] w-full max-w-4xl rounded-2xl bg-black" mediaClassName="object-contain" /> : null;
+  return url ? <ReliableImage src={url} eager alt={memory.caption || 'Nişan fotoğrafı'} className="mt-9 h-[53svh] w-full max-w-4xl rounded-2xl bg-transparent" mediaClassName="object-contain" /> : null;
 }

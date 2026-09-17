@@ -17,7 +17,7 @@ interface PreviewMemory {
 export function MemoryGridPreview({ memories, slug }: { memories: PreviewMemory[]; slug: string }) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
-      {memories.map((m, i) => {
+      {memories.filter(memory => memory.type === 'photo' || memory.type === 'video').map((m, i) => {
         const media = m.memory_media?.[0];
         const url = getMediaUrl(media?.thumbnail_path || media?.storage_path);
         const isVideo = media?.media_type === 'video' || m.type === 'video';

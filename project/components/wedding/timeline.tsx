@@ -10,7 +10,7 @@ import { ReliableImage, ReliableVideo } from '@/components/media/reliable-media'
 export function Timeline({ memories }: { memories: Memory[] }) {
   const grouped = useMemo(() => {
     const groups: Record<string, Memory[]> = {};
-    const sorted = [...memories].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    const sorted = memories.filter(memory => memory.type === 'photo' || memory.type === 'video').sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
     for (const m of sorted) {
       const key = formatTime(m.created_at);
       if (!groups[key]) groups[key] = [];
@@ -33,7 +33,7 @@ export function Timeline({ memories }: { memories: Memory[] }) {
       <div className="mx-auto max-w-2xl">
         <h1 className="font-serif text-3xl font-light text-charcoal">Bugünün Anıları</h1>
         <p className="mt-2 text-sm text-muted-foreground font-light">
-          Düğün günü saat saat yaşananlar
+          Nişan günü saat saat yaşananlar
         </p>
 
         <div className="mt-10 space-y-8">
