@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Images, MessageSquare, Settings, LogOut, ExternalLink } from 'lucide-react';
+import { LayoutDashboard, Images, MessageSquare, Settings, LogOut, ExternalLink, ClipboardCheck } from 'lucide-react';
 import { getSupabase } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
 
@@ -10,6 +10,7 @@ const navItems = [
   { href: '/admin/dashboard', label: 'Genel Bakış', icon: LayoutDashboard },
   { href: '/admin/memories', label: 'Anılar', icon: Images },
   { href: '/admin/messages', label: 'Mesajlar', icon: MessageSquare },
+  { href: '/admin/rsvps', label: 'Katılım', icon: ClipboardCheck },
   { href: '/admin/settings', label: 'Ayarlar', icon: Settings },
 ];
 

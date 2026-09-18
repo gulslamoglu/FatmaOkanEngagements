@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
-import { ArrowLeft, Camera, ImageIcon, MessageSquare, Mic, Home, Sparkles } from 'lucide-react';
+import { ArrowLeft, Camera, ImageIcon, MessageSquare, Mic, Home, Sparkles, ClipboardCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface Props {
@@ -15,6 +15,7 @@ const links = [
   { href: '/upload', label: 'Anı Bırak', icon: Camera },
   { href: '/gallery', label: 'Galeri', icon: ImageIcon },
   { href: '/messages', label: 'Mesaj', icon: MessageSquare },
+  { href: '/rsvp', label: 'Katılım', icon: ClipboardCheck },
   { href: '/voice', label: 'Ses', icon: Mic },
   { href: '#nisan-rehberi', label: 'Rehber', icon: Sparkles },
 ];
