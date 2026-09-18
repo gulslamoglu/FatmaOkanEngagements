@@ -1,6 +1,7 @@
 'use client';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Camera, ClipboardCheck, MessageSquare, Mic, ArrowUpRight, ArrowDown, Heart, Sparkles } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpRight, Camera, ClipboardCheck, Heart, MessageSquare, Mic, Sparkles, Volume2, VolumeX } from 'lucide-react';
 import type { Wedding } from '@/lib/types';
 import { coverStyle } from '@/lib/cover-position';
 import { formatDate } from '@/lib/format';
@@ -16,8 +17,48 @@ interface Props {
   stats: { photos: number; videos: number; messages: number; voices: number; total: number; guests: number };
 }
 export function WeddingHero({ wedding, memories, stats }: Props) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [musicOn, setMusicOn] = useState(false);
+  const [showBackToTop, setShowBackToTop] = useState(false);
   const names = wedding.bride_name + ' & ' + wedding.groom_name;
   const start = getEventGuide(wedding.event_guide).schedule[0]?.time;
+  const toggleMusic = async () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (musicOn) {
+      audio.pause();
+      setMusicOn(false);
+      return;
+    }
+    try {
+      audio.muted = false;
+      await audio.play();
+      setMusicOn(true);
+    } catch {
+      setMusicOn(false);
+    }
+  };
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.muted = true;
+    void audio.play().catch(() => undefined);
+
+    const enableSound = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest('[data-music-toggle]')) return;
+      audio.muted = false;
+      void audio.play().then(() => setMusicOn(true)).catch(() => undefined);
+      window.removeEventListener('pointerdown', enableSound);
+    };
+    window.addEventListener('pointerdown', enableSound);
+    return () => window.removeEventListener('pointerdown', enableSound);
+  }, []);
+  useEffect(() => {
+    const handleScroll = () => setShowBackToTop(window.scrollY > 500);
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    handleScroll();
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
   return <div className="celebration-home min-h-screen">
     <section className="relative isolate flex min-h-[92svh] flex-col overflow-hidden bg-[#393c32] text-white">
       {wedding.cover_image_url && <ReliableImage src={wedding.cover_image_url} alt="Nişan kapağı" mediaStyle={coverStyle(wedding.cover_position)} eager className="absolute inset-0 -z-20 h-full w-full" mediaClassName="object-cover" />}
@@ -32,6 +73,7 @@ export function WeddingHero({ wedding, memories, stats }: Props) {
         <div className="mt-9 flex w-full max-w-sm flex-col gap-3 sm:max-w-none sm:flex-row sm:justify-center"><a href="#rsvp" className="inline-flex items-center justify-center gap-2 rounded-full bg-[#e4cfad] px-7 py-4 text-sm font-medium text-[#403a30] shadow-lg transition-transform hover:-translate-y-1"><ClipboardCheck className="h-4 w-4" /> Katılım bildir <ArrowUpRight className="h-4 w-4" /></a><Link href={'/w/'+wedding.slug+'/upload'} className="inline-flex items-center justify-center gap-2 rounded-full border border-white/40 bg-white/10 px-7 py-4 text-sm text-white backdrop-blur-sm transition-colors hover:bg-white/20"><Camera className="h-4 w-4" /> Bir anı bırak</Link><Link href={'/w/'+wedding.slug+'/gallery'} className="inline-flex items-center justify-center gap-2 rounded-full border border-white/40 bg-white/10 px-7 py-4 text-sm text-white backdrop-blur-sm transition-colors hover:bg-white/20">Anılara göz at <Heart className="h-4 w-4" /></Link></div>
       </div>
       <a href="#nisan-rehberi" className="relative mx-auto mb-9 flex items-center gap-3 px-5 py-3 text-[10px] uppercase tracking-[0.22em] text-white/80">Gecenin detaylarını keşfet <ArrowDown className="h-4 w-4 motion-safe:animate-bounce" /></a>
+      <audio ref={audioRef} loop preload="metadata" src="/music/the_mountain-piano-556110.mp3" />
     </section>
     <div aria-hidden="true" className="flex items-center justify-center gap-5 overflow-hidden border-b border-primary/10 bg-[#ece6d9] px-5 py-4 text-[10px] uppercase tracking-[0.25em] text-primary sm:gap-10"><span>Biraz heyecan</span><Sparkles className="h-3 w-3 shrink-0" /><span>Bolca mutluluk</span><Sparkles className="h-3 w-3 shrink-0" /><span className="hidden sm:inline">Hep birlikte</span></div>
     <CoupleSlideshow names={names} />
@@ -49,5 +91,9 @@ export function WeddingHero({ wedding, memories, stats }: Props) {
     </section>
     {memories.length > 0 && <section className="px-5 py-16 sm:py-24"><div className="mx-auto max-w-5xl"><div className="mb-8 flex flex-wrap items-end justify-between gap-4"><div><p className="celebration-eyebrow">Bizim küçük hatıra albümümüz</p><h2 className="mt-3 font-serif text-4xl font-light">İyi ki <span className="italic text-primary">birlikteyiz.</span></h2><p className="mt-3 text-sm text-muted-foreground">{stats.total} anı, bir sürü güzel his.</p></div><Link href={'/w/'+wedding.slug+'/gallery'} className="inline-flex items-center gap-2 text-sm text-primary">Albümü aç <ArrowUpRight className="h-4 w-4" /></Link></div><MemoryGridPreview memories={memories.slice(0,6)} slug={wedding.slug} /></div></section>}
     <footer className="border-t border-border px-6 py-14 text-center"><Heart className="mx-auto h-5 w-5 text-primary/60" strokeWidth={1.3} /><p className="mt-4 font-serif text-3xl font-light">{names}</p><p className="mt-3 text-xs tracking-wide text-muted-foreground">Bu hikâyede senin de yerin var. İyi ki geldin.</p></footer>
+    <div className="fixed bottom-5 right-5 z-50 flex flex-col items-center gap-2 sm:bottom-7 sm:right-7">
+      <button type="button" data-music-toggle onClick={toggleMusic} aria-label={musicOn ? 'Müziği kapat' : 'Müziği aç'} title={musicOn ? 'Müziği kapat' : 'Müziği aç'} className="flex h-11 w-11 items-center justify-center rounded-full border border-white/50 bg-[#526349] text-white shadow-lg transition-transform hover:-translate-y-0.5">{musicOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}</button>
+      {showBackToTop && <button type="button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} aria-label="Sayfanın en üstüne çık" title="En üste çık" className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-card text-charcoal shadow-lg transition-transform hover:-translate-y-0.5"><ArrowUp className="h-4 w-4" /></button>}
+    </div>
   </div>;
 }

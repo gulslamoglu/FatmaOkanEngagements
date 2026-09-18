@@ -5,7 +5,6 @@ import { ArrowRight, Check, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { getSupabase } from '@/lib/supabase/client';
 import { useSessionId } from '@/lib/hooks/use-session-id';
-import { getOrCreateGuest } from '@/lib/guest-usage';
 import type { Wedding } from '@/lib/types';
 
 type Attendance = 'attending' | 'not_attending' | 'maybe';
@@ -32,7 +31,6 @@ export function RsvpForm({ wedding, embedded = false }: { wedding: Wedding; embe
     sending.current = true;
     setSaving(true);
     try {
-      await getOrCreateGuest(wedding.id, sessionId, name, false);
       const { error } = await getSupabase().rpc('submit_rsvp', {
         event_id: wedding.id,
         guest_session: sessionId,
